@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { RouterLink, RouterView, useRoute } from 'vue-router'
+import {RouterView, useRoute } from 'vue-router'
 import { computed, watch, onMounted, onUnmounted } from 'vue'
+import ColorDropdown from '@/components/ColorDropdown.vue'
 
 const route = useRoute()
 const isTimelineRoute = computed(() => route.path === '/timeline')
@@ -31,14 +32,7 @@ onUnmounted(() => {
 
 <template>
   <div :class="{ 'timeline-layout': isTimelineRoute }">
-    <nav v-if="!isTimelineRoute" class="top-nav">
-      <div class="nav-content">
-        <div class="brand">Vue Timeline Demo</div>
-        <div class="nav-links">
-          <RouterLink to="/timeline">Timeline</RouterLink>
-        </div>
-      </div>
-    </nav>
+    <ColorDropdown />
     <RouterView />
   </div>
 </template>

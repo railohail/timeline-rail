@@ -9,7 +9,7 @@
       <div class="form-container">
         <div class="form-header">
           <h3>Add New Event</h3>
-          <button @click="closeAddForm" class="close-btn">×</button>
+          <Button @click="closeAddForm" class="close-btn">×</Button>
         </div>
         <form @submit.prevent="addEvent">
           <div class="form-group">
@@ -47,12 +47,48 @@
             <input @change="handleImageUpload" type="file" accept="image/*" />
             <div v-if="newEvent.image" class="image-preview">
               <img :src="newEvent.image" alt="Preview" />
-              <button @click="removeImage" type="button" class="remove-image">×</button>
+              <Button @click="removeImage" type="Button" class="remove-image">×</Button>
             </div>
           </div>
           <div class="form-actions">
-            <button type="button" @click="closeAddForm" class="btn-cancel">Cancel</button>
-            <button type="submit" class="btn-submit">Add Event</button>
+            <Button type="Button" @click="closeAddForm" class="btn-cancel">Cancel</Button>
+            <Button type="submit" class="btn-submit">Add Event</Button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Add Highlight Form -->
+    <div v-if="showHighlightForm" class="add-event-form" @click.stop>
+      <div class="form-container">
+        <div class="form-header">
+          <h3>Add Timeline Highlight</h3>
+          <Button @click="closeHighlightForm" class="close-btn">×</Button>
+        </div>
+        <form @submit.prevent="addHighlight">
+          <div class="form-group">
+            <label>Start Time *</label>
+            <input v-model="newHighlight.startDate" type="datetime-local" required />
+          </div>
+          <div class="form-group">
+            <label>End Time *</label>
+            <input v-model="newHighlight.endDate" type="datetime-local" required />
+          </div>
+          <div class="form-group">
+            <label>Start Label</label>
+            <input v-model="newHighlight.startLabel" type="text" placeholder="Start label" />
+          </div>
+          <div class="form-group">
+            <label>End Label</label>
+            <input v-model="newHighlight.endLabel" type="text" placeholder="End label" />
+          </div>
+          <div class="form-group">
+            <label>Color</label>
+            <input v-model="newHighlight.color" type="color" />
+          </div>
+          <div class="form-actions">
+            <Button type="Button" @click="closeHighlightForm" class="btn-cancel">Cancel</Button>
+            <Button type="submit" class="btn-submit">Add Highlight</Button>
           </div>
         </form>
       </div>
@@ -90,8 +126,25 @@
             class="event-range-bar"
             :style="getEventRangeStyle(event)"
           ></div>
-          <div class="event-dot" :style="{ backgroundColor: event.color || '#4285f4' }"></div>
+          <div class="event-dot" :style="{ backgroundColor: event.color || defaultEventColor }"></div>
           <div class="event-label" v-if="shouldShowEventLabel()">{{ event.title }}</div>
+        </div>
+      </div>
+
+      <!-- Highlights in Detail Band -->
+      <div class="highlights-layer" v-if="highlights.length > 0">
+        <div
+          v-for="highlight in visibleHighlights"
+          :key="`hl-${highlight.id}`"
+          class="timeline-highlight"
+          :style="getHighlightStyle(highlight, false)"
+        >
+          <div class="highlight-label highlight-start-label" v-if="highlight.startLabel">
+            {{ highlight.startLabel }}
+          </div>
+          <div class="highlight-label highlight-end-label" v-if="highlight.endLabel">
+            {{ highlight.endLabel }}
+          </div>
         </div>
       </div>
     </div>
@@ -106,7 +159,7 @@
         @mouseup="stopOverviewDrag($event)"
       />
 
-      <!-- Overview events -->
+      <!-- Events layer -->
       <div class="events-layer">
         <div
           v-for="event in overviewVisibleEvents"
@@ -114,8 +167,18 @@
           class="timeline-event overview-event"
           :style="getOverviewEventPosition(event)"
         >
-          <div class="event-dot-small" :style="{ backgroundColor: event.color || '#4285f4' }"></div>
+          <div class="event-dot-small" :style="{ backgroundColor: event.color || defaultEventColor }"></div>
         </div>
+      </div>
+
+      <!-- Highlights in Overview Band -->
+      <div class="highlights-layer overview-highlights-layer" v-if="highlights.length > 0">
+        <div
+          v-for="highlight in overviewVisibleHighlights"
+          :key="`ovhl-${highlight.id}`"
+          class="timeline-highlight overview-highlight"
+          :style="getHighlightStyle(highlight, true)"
+        ></div>
       </div>
 
       <!-- Viewport indicator -->
@@ -129,7 +192,7 @@
         :key="`line-${detail.event.id}`"
         :ref="(el) => setConnectionLineRef(el as Element | null, detail.event.id)"
         :d="detail.connectionPathD"
-        :stroke="detail.event.color || '#4285f4'"
+        :stroke="detail.event.color || defaultEventColor"
         :stroke-width="detail.isDragging ? 3 : 2"
         :stroke-dasharray="detail.isPinned ? 'none' : '5,5'"
         :opacity="detail.isPinned ? 0.7 : 0.5"
@@ -148,7 +211,7 @@
       :class="{ 'detail-dragging': detail.isDragging, 'detail-pinned': detail.isPinned }"
       :style="{
         ...detail.position,
-        borderColor: detail.isPinned ? detail.event.color || '#4285f4' : '#ddd',
+        borderColor: detail.isPinned ? detail.event.color || defaultEventColor : 'var(--border)',
         zIndex: detail.zIndex,
       }"
       @mousedown="startDetailDrag(detail, $event)"
@@ -157,15 +220,15 @@
       <div class="detail-header">
         <h4>{{ detail.event.title }}</h4>
         <div class="detail-header-actions">
-          <button
+          <Button
             @click="togglePin(detail)"
             class="pin-btn"
             :class="{ pinned: detail.isPinned }"
             title="Double-click event to pin/unpin"
           >
             📌
-          </button>
-          <button @click="removeEventDetail(detail.event.id)" class="close-btn">×</button>
+          </Button>
+          <Button @click="removeEventDetail(detail.event.id)" class="close-btn">×</Button>
         </div>
       </div>
       <div class="detail-content">
@@ -179,19 +242,20 @@
           <img :src="detail.event.image" :alt="detail.event.title" />
         </div>
         <div class="detail-actions">
-          <button @click="editEvent(detail.event)" class="btn-edit">Edit</button>
-          <button @click="deleteEvent(detail.event.id)" class="btn-delete">Delete</button>
+          <Button @click="editEvent(detail.event)" class="btn-edit">Edit</Button>
+          <Button @click="deleteEvent(detail.event.id)" class="btn-delete">Delete</Button>
         </div>
       </div>
     </div>
 
     <!-- Controls -->
     <div class="timeline-controls">
-      <button @click="showAddEventForm" class="btn-add">+ Add Event</button>
-      <button @click="goToToday">Today</button>
-      <button @click="zoomIn">+</button>
-      <button @click="zoomOut">−</button>
-      <button @click="fitToData">Fit All</button>
+      <Button @click="showAddEventForm" class="btn-add">+ Add Event</Button>
+      <Button @click="showAddHighlightForm" class="btn-highlight">+ Add Highlight</Button>
+      <Button @click="goToToday">Today</Button>
+      <Button @click="zoomIn">+</Button>
+      <Button @click="zoomOut">−</Button>
+      <Button @click="fitToData">Fit All</Button>
       <span class="current-center">{{ formatDate(new Date(centerTime)) }}</span>
       <span class="zoom-level">{{ getZoomLevelText() }}</span>
     </div>
@@ -200,6 +264,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { Button } from '@/components/ui/button'
 
 interface TimelineEvent {
   id: string
@@ -210,6 +275,15 @@ interface TimelineEvent {
   color?: string
   image?: string
   track?: number
+}
+
+interface TimelineHighlight {
+  id: string
+  startDate: Date
+  endDate: Date
+  startLabel?: string
+  endLabel?: string
+  color: string
 }
 
 interface EventDetail {
@@ -284,6 +358,17 @@ const newEvent = ref({
   image: '',
 })
 
+// Highlights management
+const highlights = ref<TimelineHighlight[]>([])
+const showHighlightForm = ref(false)
+const newHighlight = ref({
+  startDate: '',
+  endDate: '',
+  startLabel: '',
+  endLabel: '',
+  color: 'rgba(255, 235, 59, 0.25)',
+})
+
 // Constants
 const DAY_MS = 24 * 60 * 60 * 1000
 const HOUR_MS = 60 * 60 * 1000
@@ -295,6 +380,18 @@ const eventTracks = ref<Map<string, number>>(new Map())
 
 // Add this after the other ref declarations
 const lastInteractionCounter = ref(0)
+
+// After the ref declarations, add a theme observer ref
+const themeObserver = ref<MutationObserver | null>(null)
+
+// Add a computed property for the default color
+const defaultEventColor = computed(() => {
+  if (timelineContainer.value) {
+    const computedStyle = getComputedStyle(timelineContainer.value)
+    return computedStyle.getPropertyValue('--primary') || '#4285f4'
+  }
+  return '#4285f4'
+})
 
 // Computed properties for adaptive zoom
 const timeSpan = computed(() => {
@@ -392,6 +489,28 @@ const overviewVisibleEvents = computed(() => {
   })
 })
 
+// Add these after the existing computed properties
+const visibleHighlights = computed(() => {
+  const viewSpan = (containerWidth.value / pixelsPerDay.value) * DAY_MS
+  const startTime = centerTime.value - viewSpan
+  const endTime = centerTime.value + viewSpan
+
+  return highlights.value.filter((highlight) => {
+    return highlight.endDate.getTime() >= startTime && highlight.startDate.getTime() <= endTime
+  })
+})
+
+const overviewVisibleHighlights = computed(() => {
+  const overviewScale = pixelsPerDay.value * 0.1
+  const viewSpan = (containerWidth.value / overviewScale) * DAY_MS
+  const startTime = centerTime.value - viewSpan
+  const endTime = centerTime.value + viewSpan
+
+  return highlights.value.filter((highlight) => {
+    return highlight.endDate.getTime() >= startTime && highlight.startDate.getTime() <= endTime
+  })
+})
+
 // Methods
 function timeToPixel(time: number): number {
   const offsetTime = time - centerTime.value
@@ -427,7 +546,7 @@ function getEventRangeStyle(event: TimelineEvent): Record<string, string> {
 
   return {
     width: `${width}px`,
-    backgroundColor: event.color || '#4285f4',
+    backgroundColor: event.color || defaultEventColor.value,
     opacity: '0.3',
   }
 }
@@ -493,14 +612,22 @@ function getViewportStyle(): Record<string, string> {
   const indicatorWidthRatio = detailViewSpan / overviewViewSpan
   const indicatorWidth = Math.max(containerWidth.value * indicatorWidthRatio, 20)
 
+  // Check if dark mode is active
+  const isDarkMode = document.documentElement.classList.contains('dark') ||
+                     document.body.classList.contains('dark')
+
+  // Use brighter colors for dark mode
+  const bgColor = isDarkMode ? 'rgba(255, 180, 0, 0.25)' : 'rgba(255, 200, 0, 0.3)'
+  const borderColor = isDarkMode ? '#ffae00' : '#ffa500'
+
   return {
     position: 'absolute',
     left: `${containerWidth.value / 2 - indicatorWidth / 2}px`,
     top: '0',
     width: `${indicatorWidth}px`,
     height: '100%',
-    backgroundColor: 'rgba(255, 200, 0, 0.3)',
-    border: '1px solid #ffa500',
+    backgroundColor: bgColor,
+    border: `1px solid ${borderColor}`,
     pointerEvents: 'none',
   }
 }
@@ -623,13 +750,36 @@ function drawTimeAxis(canvas: HTMLCanvasElement, scale: number, isOverview = fal
 
   ctx.clearRect(0, 0, canvas.width, canvas.height)
 
+  // Get computed styles from the timeline container
+  const computedStyle = timelineContainer.value ? getComputedStyle(timelineContainer.value) : null
+
+  // Check if dark mode is active
+  const isDarkMode = document.documentElement.classList.contains('dark') ||
+                     document.body.classList.contains('dark')
+
   // Background
-  ctx.fillStyle = isOverview ? '#f0f0f0' : '#f8f8f8'
+  if (computedStyle) {
+    const bgColor = isOverview ? computedStyle.getPropertyValue('--muted') : computedStyle.getPropertyValue('--card')
+    ctx.fillStyle = bgColor
+  } else {
+    ctx.fillStyle = isOverview ? '#f0f0f0' : '#f8f8f8'
+  }
   ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-  // Grid and labels
-  ctx.strokeStyle = '#ddd'
-  ctx.fillStyle = '#333'
+  // Grid and labels - use higher contrast in dark mode
+  if (computedStyle) {
+    // Use higher contrast colors in dark mode for better visibility
+    if (isDarkMode) {
+      ctx.strokeStyle = isOverview ? 'rgba(255, 255, 255, 0.25)' : 'rgba(255, 255, 255, 0.2)'
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'
+    } else {
+      ctx.strokeStyle = computedStyle.getPropertyValue('--border')
+      ctx.fillStyle = computedStyle.getPropertyValue('--foreground')
+    }
+  } else {
+    ctx.strokeStyle = '#ddd'
+    ctx.fillStyle = '#333'
+  }
   ctx.font = isOverview ? '10px Arial' : '11px Arial'
   ctx.textAlign = 'center'
 
@@ -671,7 +821,12 @@ function drawTimeAxis(canvas: HTMLCanvasElement, scale: number, isOverview = fal
   if (!isOverview) {
     const nowX = timeToPixel(Date.now())
     if (nowX >= 0 && nowX <= canvas.width) {
-      ctx.strokeStyle = '#ff4444'
+      // Make the current time line more visible in dark mode
+      if (isDarkMode) {
+        ctx.strokeStyle = 'rgba(255, 100, 100, 0.85)' // Brighter red in dark mode
+      } else {
+        ctx.strokeStyle = computedStyle ? computedStyle.getPropertyValue('--destructive') : '#ff4444'
+      }
       ctx.lineWidth = 2
       ctx.beginPath()
       ctx.moveTo(nowX, 0)
@@ -834,7 +989,7 @@ function closeAddForm(): void {
     startDate: '',
     endDate: '',
     isRange: false,
-    color: '#4285f4',
+    color: defaultEventColor.value,
     image: '',
   }
   // If we were editing, the original event was deleted.
@@ -1097,7 +1252,7 @@ function editEvent(event: TimelineEvent): void {
     startDate: event.startDate.toISOString().slice(0, 16),
     endDate: event.endDate ? event.endDate.toISOString().slice(0, 16) : '',
     isRange: !!event.endDate,
-    color: event.color || '#4285f4',
+    color: event.color || defaultEventColor.value,
     image: event.image || '',
   }
 
@@ -1491,6 +1646,9 @@ onMounted(() => {
   resizeHandler()
   window.addEventListener('resize', resizeHandler)
 
+  // Set up theme change observer
+  setupThemeObserver()
+
   document.addEventListener('mousemove', (e) => {
     if (isDragging.value || isOverviewDragging.value) {
       if (isDragging.value) {
@@ -1526,18 +1684,164 @@ onUnmounted(() => {
   window.removeEventListener('resize', resizeHandler)
   stopPhysicsSimulation()
 
+  // Disconnect theme observer
+  if (themeObserver.value) {
+    themeObserver.value.disconnect()
+    themeObserver.value = null
+  }
+
   // Clear any timeouts
   if (hoverTimeout.value) {
     clearTimeout(hoverTimeout.value)
   }
 })
+
+// Add a new function to set up the theme observer
+function setupThemeObserver(): void {
+  // First, handle initial drawing with correct theme
+  redrawCanvases()
+
+  // Set up observer for theme changes (when classes are added or removed from html or body)
+  themeObserver.value = new MutationObserver((mutations) => {
+    let needsRedraw = false
+
+    for (const mutation of mutations) {
+      if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+        needsRedraw = true
+        break
+      }
+    }
+
+    if (needsRedraw) {
+      // Use requestAnimationFrame to avoid multiple redraws in quick succession
+      requestAnimationFrame(() => {
+        redrawCanvases()
+      })
+    }
+  })
+
+  // Observe html and body elements for class changes
+  const htmlElement = document.documentElement
+  const bodyElement = document.body
+
+  if (htmlElement) {
+    themeObserver.value.observe(htmlElement, { attributes: true, attributeFilter: ['class'] })
+  }
+
+  if (bodyElement) {
+    themeObserver.value.observe(bodyElement, { attributes: true, attributeFilter: ['class'] })
+  }
+}
+
+function showAddHighlightForm(): void {
+  showHighlightForm.value = true
+
+  // Pre-set the dates to current view for convenience
+  // Default to highlighting a period of the current visible span
+  const viewSpanMs = (containerWidth.value / pixelsPerDay.value) * DAY_MS * 0.25
+  const startDate = new Date(centerTime.value - viewSpanMs / 2)
+  const endDate = new Date(centerTime.value + viewSpanMs / 2)
+
+  newHighlight.value.startDate = startDate.toISOString().slice(0, 16)
+  newHighlight.value.endDate = endDate.toISOString().slice(0, 16)
+}
+
+function closeHighlightForm(): void {
+  showHighlightForm.value = false
+
+  // Reset form
+  newHighlight.value = {
+    startDate: '',
+    endDate: '',
+    startLabel: '',
+    endLabel: '',
+    color: 'rgba(255, 235, 59, 0.25)',
+  }
+}
+
+function addHighlight(): void {
+  const highlight: TimelineHighlight = {
+    id: `highlight-${Date.now()}`,
+    startDate: new Date(newHighlight.value.startDate),
+    endDate: new Date(newHighlight.value.endDate),
+    startLabel: newHighlight.value.startLabel || undefined,
+    endLabel: newHighlight.value.endLabel || undefined,
+    color: newHighlight.value.color,
+  }
+
+  highlights.value.push(highlight)
+  closeHighlightForm()
+  redrawCanvases()
+}
+
+function getHighlightStyle(highlight: TimelineHighlight, isOverview: boolean): Record<string, string> {
+  let startX, endX, width;
+
+  if (isOverview) {
+    // Use the same scaling approach as the overview events
+    const overviewScale = pixelsPerDay.value * 0.1
+
+    const startOffsetTime = highlight.startDate.getTime() - centerTime.value
+    const startOffsetDays = startOffsetTime / DAY_MS
+    startX = containerWidth.value / 2 + startOffsetDays * overviewScale
+
+    const endOffsetTime = highlight.endDate.getTime() - centerTime.value
+    const endOffsetDays = endOffsetTime / DAY_MS
+    endX = containerWidth.value / 2 + endOffsetDays * overviewScale
+
+    width = Math.max(endX - startX, 5)
+  } else {
+    // For detail panel, use the regular timeToPixel function
+    startX = timeToPixel(highlight.startDate.getTime())
+    endX = timeToPixel(highlight.endDate.getTime())
+    width = Math.max(endX - startX, 10)
+  }
+
+  // Height depends on which band we're in
+  const height = '100%'
+  const top = '0'
+
+  // Use a semi-transparent version of the color for the background
+  let bgColor = highlight.color
+  if (!bgColor.includes('rgba')) {
+    // Convert hex or rgb to rgba with 0.25 opacity
+    if (bgColor.startsWith('#')) {
+      const r = parseInt(bgColor.slice(1, 3), 16)
+      const g = parseInt(bgColor.slice(3, 5), 16)
+      const b = parseInt(bgColor.slice(5, 7), 16)
+      bgColor = `rgba(${r}, ${g}, ${b}, 0.25)`
+    } else if (bgColor.startsWith('rgb(')) {
+      bgColor = bgColor.replace('rgb(', 'rgba(').replace(')', ', 0.25)')
+    }
+  }
+
+  const styles: Record<string, string> = {
+    position: 'absolute',
+    left: `${startX}px`,
+    top,
+    width: `${width}px`,
+    height,
+    backgroundColor: bgColor,
+    zIndex: isOverview ? '4' : '5',
+  };
+
+  if (isOverview) {
+    styles.borderTopColor = highlight.color;
+    styles.borderBottomColor = highlight.color;
+  } else {
+    styles.borderLeft = `2px solid ${highlight.color}`;
+    styles.borderRight = `2px solid ${highlight.color}`;
+  }
+
+  return styles;
+}
 </script>
 
 <style scoped>
 .timeline-container {
   width: 100%;
   height: 100vh;
-  background: #fafafa;
+  background: var(--background);
   font-family: Arial, sans-serif;
   position: relative;
   overflow: hidden;
@@ -1546,8 +1850,8 @@ onUnmounted(() => {
 .timeline-band {
   position: relative;
   width: 100%;
-  border-bottom: 1px solid #ccc;
-  background: white;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
 }
 
 .detail-band {
@@ -1556,7 +1860,7 @@ onUnmounted(() => {
 
 .overview-band {
   height: 80px;
-  background: #f0f0f0;
+  background: var(--muted);
 }
 
 .timeline-canvas {
@@ -1623,15 +1927,25 @@ onUnmounted(() => {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 2px solid white;
+  border: 2px solid var(--card);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.dark .event-dot {
+  border-color: var(--background);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.1);
 }
 
 .event-dot-small {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  border: 1px solid white;
+  border: 1px solid var(--card);
+}
+
+.dark .event-dot-small {
+  border-color: var(--background);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1);
 }
 
 .event-label {
@@ -1639,7 +1953,8 @@ onUnmounted(() => {
   left: 18px;
   top: -8px;
   white-space: nowrap;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--card);
+  opacity: 0.9;
   padding: 2px 6px;
   border-radius: 3px;
   font-size: 11px;
@@ -1647,6 +1962,13 @@ onUnmounted(() => {
   max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--card-foreground);
+}
+
+.dark .event-label {
+  background: var(--background);
+  opacity: 0.95;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1);
 }
 
 .overview-event .event-label {
@@ -1661,9 +1983,10 @@ onUnmounted(() => {
   position: absolute;
   top: 15px;
   right: 15px;
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--card);
+  opacity: 0.95;
   padding: 8px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   z-index: 1100;
   display: flex;
@@ -1671,38 +1994,46 @@ onUnmounted(() => {
   gap: 8px;
 }
 
-.timeline-controls button {
+.timeline-controls Button {
   margin: 0 3px;
   padding: 6px 10px;
-  border: 1px solid #ccc;
-  background: white;
-  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--card-foreground);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 12px;
   font-weight: bold;
 }
 
-.timeline-controls button:hover {
-  background: #f0f0f0;
+.timeline-controls Button:hover {
+  background: var(--muted);
 }
 
 .btn-add {
-  background: #4285f4 !important;
-  color: white !important;
-  border-color: #4285f4 !important;
+  background: var(--primary) !important;
+  color: var(--primary-foreground) !important;
+  border-color: var(--primary) !important;
+}
+
+.btn-highlight {
+  background: var(--accent) !important;
+  color: var(--accent-foreground) !important;
+  border-color: var(--accent) !important;
 }
 
 .current-center {
   margin-left: 12px;
   font-size: 12px;
-  color: #666;
+  color: var(--muted-foreground);
   font-weight: bold;
 }
 
 .zoom-level {
   margin-left: 8px;
   font-size: 11px;
-  color: #999;
+  color: var(--muted-foreground);
+  opacity: 0.7;
   font-style: italic;
 }
 
@@ -1730,9 +2061,9 @@ onUnmounted(() => {
 }
 
 .form-container {
-  background: white;
+  background: var(--card);
   padding: 20px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   max-width: 500px;
   width: 90%;
   max-height: 80vh;
@@ -1761,14 +2092,14 @@ onUnmounted(() => {
 
 .form-header h3 {
   margin: 0;
-  color: #333;
+  color: var(--card-foreground);
 }
 
 .close-btn {
   background: none;
   border: none;
   font-size: 20px;
-  color: #666;
+  color: var(--muted-foreground);
   cursor: pointer;
   padding: 0;
   width: 30px;
@@ -1779,7 +2110,7 @@ onUnmounted(() => {
 }
 
 .close-btn:hover {
-  color: #333;
+  color: var(--foreground);
 }
 
 .form-group {
@@ -1790,23 +2121,28 @@ onUnmounted(() => {
   display: block;
   margin-bottom: 5px;
   font-weight: 500;
-  color: #333;
+  color: var(--foreground);
 }
 
 .form-group input,
 .form-group textarea {
   width: 100%;
   padding: 8px 12px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-sm);
   font-size: 14px;
   box-sizing: border-box;
+  background: var(--background);
+  color: var(--foreground);
 }
 
 .form-group input:focus,
 .form-group textarea:focus {
   outline: none;
-  border-color: #4285f4;
+  border-color: var(--primary);
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 2px var(--ring);
 }
 
 .form-actions {
@@ -1820,28 +2156,28 @@ onUnmounted(() => {
 .btn-submit {
   padding: 10px 20px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 14px;
   font-weight: 500;
 }
 
 .btn-cancel {
-  background: #f5f5f5;
-  color: #666;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
 }
 
 .btn-cancel:hover {
-  background: #e0e0e0;
+  background: var(--accent);
 }
 
 .btn-submit {
-  background: #4285f4;
-  color: white;
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 
 .btn-submit:hover {
-  background: #3367d6;
+  opacity: 0.9;
 }
 
 .image-preview {
@@ -1853,16 +2189,16 @@ onUnmounted(() => {
 .image-preview img {
   max-width: 200px;
   max-height: 150px;
-  border-radius: 4px;
-  border: 1px solid #ddd;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
 }
 
 .remove-image {
   position: absolute;
   top: -5px;
   right: -5px;
-  background: #ff4444;
-  color: white;
+  background: var(--destructive);
+  color: var(--destructive-foreground);
   border: none;
   border-radius: 50%;
   width: 20px;
@@ -1876,9 +2212,9 @@ onUnmounted(() => {
 
 .event-detail-panel {
   position: absolute;
-  background: white;
-  border: 1px solid #ddd;
-  border-radius: 8px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   width: 300px;
   min-height: 200px;
@@ -1913,19 +2249,19 @@ onUnmounted(() => {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  border-bottom: 1px solid #eee;
-  background: #f8f9fa;
-  border-radius: 8px 8px 0 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--muted);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   cursor: move;
 }
 
 .detail-header:hover {
-  background: #f0f1f3;
+  opacity: 0.9;
 }
 
 .detail-header h4 {
   margin: 0;
-  color: #333;
+  color: var(--foreground);
   font-size: 16px;
 }
 
@@ -1935,13 +2271,13 @@ onUnmounted(() => {
 
 .detail-date {
   margin-bottom: 12px;
-  color: #666;
+  color: var(--muted-foreground);
   font-size: 14px;
 }
 
 .detail-description {
   margin-bottom: 12px;
-  color: #333;
+  color: var(--foreground);
   line-height: 1.4;
 }
 
@@ -1951,7 +2287,7 @@ onUnmounted(() => {
 
 .detail-image img {
   max-width: 100%;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 
 .detail-actions {
@@ -1964,28 +2300,28 @@ onUnmounted(() => {
 .btn-delete {
   padding: 6px 12px;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   font-size: 12px;
 }
 
 .btn-edit {
-  background: #4285f4;
-  color: white;
+  background: var(--primary);
+  color: var(--primary-foreground);
 }
 
 .btn-edit:hover {
-  background: #3367d6;
+  opacity: 0.9;
 }
 
 .btn-delete {
-  background: #f5f5f5;
-  color: #666;
+  background: var(--secondary);
+  color: var(--secondary-foreground);
 }
 
 .btn-delete:hover {
-  background: #ff4444;
-  color: white;
+  background: var(--destructive);
+  color: var(--destructive-foreground);
 }
 
 .detail-header-actions {
@@ -1998,7 +2334,7 @@ onUnmounted(() => {
   background: none;
   border: none;
   font-size: 16px;
-  color: #999;
+  color: var(--muted-foreground);
   cursor: pointer;
   padding: 4px;
   width: 28px;
@@ -2006,16 +2342,16 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   transition: all 0.2s ease;
 }
 
 .pin-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--accent);
 }
 
 .pin-btn.pinned {
-  color: #4285f4;
+  color: var(--primary);
   transform: rotate(45deg);
 }
 
@@ -2038,8 +2374,16 @@ onUnmounted(() => {
   transition: all 0.15s ease;
 }
 
+.dark .connection-line {
+  opacity: 0.7 !important; /* Slightly more visible in dark mode */
+}
+
 .connection-line:not(.detail-pinned):not(.line-dragging) {
   animation: dashAnimation 20s linear infinite;
+}
+
+.dark .connection-line:not(.detail-pinned):not(.line-dragging) {
+  animation: dashAnimation 15s linear infinite; /* Faster animation in dark mode for better visibility */
 }
 
 .connection-line.line-dragging {
@@ -2052,5 +2396,65 @@ onUnmounted(() => {
   to {
     stroke-dashoffset: -40;
   }
+}
+
+.highlights-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.overview-highlights-layer {
+  z-index: 3;
+}
+
+.timeline-highlight {
+  position: absolute;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.overview-highlight {
+  z-index: 4;
+  opacity: 0.8;
+  border-top: 1px solid;
+  border-bottom: 1px solid;
+  top: 0 !important;
+}
+
+.highlight-label {
+  position: absolute;
+  background: var(--card);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  color: var(--card-foreground);
+  white-space: nowrap;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.highlight-start-label {
+  left: 0;
+  transform: translate(-50%, -50%);
+}
+
+.highlight-end-label {
+  right: 0;
+  transform: translate(50%, -50%);
+}
+
+.dark .highlight-label {
+  background: var(--background);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1);
 }
 </style>
