@@ -171,6 +171,22 @@ export const useTimelineStore = defineStore('timeline', () => {
     await saveCurrentTimeline()
   }
 
+  async function updateHighlight(id: string, updates: Partial<Omit<TimelineHighlight, 'id'>>): Promise<void> {
+    if (!currentTimeline.value) return
+
+    const highlightIndex = currentTimeline.value.highlights.findIndex(h => h.id === id)
+    if (highlightIndex === -1) return
+
+    const highlight = currentTimeline.value.highlights[highlightIndex]
+    currentTimeline.value.highlights[highlightIndex] = {
+      ...highlight,
+      ...updates,
+      startDate: updates.startDate ? new Date(updates.startDate) : highlight.startDate,
+      endDate: updates.endDate ? new Date(updates.endDate) : highlight.endDate
+    }
+    await saveCurrentTimeline()
+  }
+
   async function deleteHighlight(id: string): Promise<void> {
     if (!currentTimeline.value) return
 
@@ -311,6 +327,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     updateEvent,
     deleteEvent,
     addHighlight,
+    updateHighlight,
     deleteHighlight,
     deleteTimeline,
     saveImage,

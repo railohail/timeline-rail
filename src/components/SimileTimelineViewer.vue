@@ -62,7 +62,7 @@
     <div v-if="showHighlightForm" class="add-event-form" @click.stop>
       <div class="form-container">
         <div class="form-header">
-          <h3>Add Timeline Highlight</h3>
+          <h3>{{ editingHighlightId ? 'Edit Timeline Highlight' : 'Add Timeline Highlight' }}</h3>
           <Button @click="closeHighlightForm" class="close-btn">×</Button>
         </div>
         <form @submit.prevent="addHighlight">
@@ -88,7 +88,15 @@
           </div>
           <div class="form-actions">
             <Button type="Button" @click="closeHighlightForm" class="btn-cancel">Cancel</Button>
-            <Button type="submit" class="btn-submit">Add Highlight</Button>
+            <Button
+              v-if="editingHighlightId"
+              type="Button"
+              @click="deleteCurrentHighlight"
+              class="btn-delete"
+            >
+              Delete
+            </Button>
+            <Button type="submit" class="btn-submit">{{ editingHighlightId ? 'Update Highlight' : 'Add Highlight' }}</Button>
           </div>
         </form>
       </div>
@@ -145,6 +153,23 @@
           <div class="highlight-label highlight-end-label" v-if="highlight.endLabel">
             {{ highlight.endLabel }}
           </div>
+          <!-- Edit label that appears on hover (includes hover area) -->
+          <div
+            v-if="hoveredHighlightId === highlight.id"
+            @click="editHighlight(highlight)"
+            @mouseleave="handleHighlightLeave"
+            class="highlight-edit-label"
+            :style="{ backgroundColor: highlight.color }"
+            title="Click to edit highlight"
+          >
+            Edit
+          </div>
+          <!-- Small invisible hover area for triggering edit -->
+          <div
+            class="highlight-hover-area"
+            :style="getHighlightHoverAreaStyle(highlight)"
+            @mouseenter="handleHighlightHover(highlight)"
+          ></div>
         </div>
       </div>
     </div>
@@ -401,6 +426,8 @@ const newHighlight = ref({
   endLabel: '',
   color: 'rgba(255, 235, 59, 0.25)',
 })
+const hoveredHighlightId = ref<string | null>(null)
+const editingHighlightId = ref<string | null>(null)
 
 // Constants
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -1845,6 +1872,7 @@ function showAddHighlightForm(): void {
 
 function closeHighlightForm(): void {
   showHighlightForm.value = false
+  editingHighlightId.value = null
 
   // Reset form
   newHighlight.value = {
@@ -1858,17 +1886,63 @@ function closeHighlightForm(): void {
 
 async function addHighlight(): Promise<void> {
   try {
-    await timelineStore.addHighlight({
-      startDate: new Date(newHighlight.value.startDate),
-      endDate: new Date(newHighlight.value.endDate),
-      startLabel: newHighlight.value.startLabel || undefined,
-      endLabel: newHighlight.value.endLabel || undefined,
-      color: newHighlight.value.color,
-    })
+    if (editingHighlightId.value) {
+      // Update existing highlight
+      await timelineStore.updateHighlight(editingHighlightId.value, {
+        startDate: new Date(newHighlight.value.startDate),
+        endDate: new Date(newHighlight.value.endDate),
+        startLabel: newHighlight.value.startLabel || undefined,
+        endLabel: newHighlight.value.endLabel || undefined,
+        color: newHighlight.value.color,
+      })
+    } else {
+      // Add new highlight
+      await timelineStore.addHighlight({
+        startDate: new Date(newHighlight.value.startDate),
+        endDate: new Date(newHighlight.value.endDate),
+        startLabel: newHighlight.value.startLabel || undefined,
+        endLabel: newHighlight.value.endLabel || undefined,
+        color: newHighlight.value.color,
+      })
+    }
     closeHighlightForm()
     redrawCanvases()
   } catch (error) {
-    console.error('Failed to add highlight:', error)
+    console.error('Failed to save highlight:', error)
+  }
+}
+
+function handleHighlightHover(highlight: TimelineHighlight): void {
+  hoveredHighlightId.value = highlight.id
+}
+
+function handleHighlightLeave(): void {
+  hoveredHighlightId.value = null
+}
+
+function editHighlight(highlight: TimelineHighlight): void {
+  // Pre-fill form with highlight data
+  newHighlight.value = {
+    startDate: highlight.startDate.toISOString().slice(0, 16),
+    endDate: highlight.endDate.toISOString().slice(0, 16),
+    startLabel: highlight.startLabel || '',
+    endLabel: highlight.endLabel || '',
+    color: highlight.color,
+  }
+
+  editingHighlightId.value = highlight.id
+  showHighlightForm.value = true
+}
+
+async function deleteCurrentHighlight(): Promise<void> {
+  if (!editingHighlightId.value) return
+
+  try {
+    await timelineStore.deleteHighlight(editingHighlightId.value)
+    closeHighlightForm()
+    redrawCanvases()
+  } catch (error) {
+    console.error('Failed to delete highlight:', error)
   }
 }
 
@@ -1921,6 +1995,7 @@ function getHighlightStyle(highlight: TimelineHighlight, isOverview: boolean): R
     height,
     backgroundColor: bgColor,
     zIndex: isOverview ? '4' : '5',
+    pointerEvents: 'none', // Keep pointer events disabled for scrolling
   };
 
   if (isOverview) {
@@ -1932,6 +2007,28 @@ function getHighlightStyle(highlight: TimelineHighlight, isOverview: boolean): R
   }
 
   return styles;
+}
+
+function getHighlightHoverAreaStyle(highlight: TimelineHighlight): Record<string, string> {
+  const startX = timeToPixel(highlight.startDate.getTime())
+  const endX = timeToPixel(highlight.endDate.getTime())
+  const width = Math.max(endX - startX, 10)
+
+  // Create a small hover area at the top-left corner of the highlight
+  const hoverWidth = Math.min(60, width * 0.3) // Max 60px or 30% of highlight width
+  const hoverHeight = 30 // Fixed height for hover area
+
+  return {
+    position: 'absolute',
+    left: '0px',
+    top: '0px',
+    width: `${hoverWidth}px`,
+    height: `${hoverHeight}px`,
+    pointerEvents: 'all',
+    zIndex: '15',
+    // Invisible but interactive
+    backgroundColor: 'transparent',
+  }
 }
 
 // Controls drag functionality
@@ -2666,5 +2763,36 @@ function stopControlsDrag(): void {
   background-color: #ccc;
   color: #999;
   cursor: not-allowed;
+}
+
+.highlight-hover-area {
+  cursor: pointer;
+}
+
+.highlight-edit-label {
+  position: absolute;
+  top: 0;
+  left: 4px;
+  padding: 4px 8px;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  color: white;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  z-index: 20;
+  transition: all 0.2s ease;
+  opacity: 0.7;
+  background-color: transparent;
+  backdrop-filter: blur(4px);
+  pointer-events: all;
+  user-select: none;
+}
+
+.highlight-edit-label:hover {
+  transform: scale(1.05);
+  opacity: 0.9;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.4);
 }
 </style>
