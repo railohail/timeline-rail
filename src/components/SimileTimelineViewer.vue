@@ -249,15 +249,38 @@
     </div>
 
     <!-- Controls -->
-    <div class="timeline-controls">
-      <Button @click="showAddEventForm" class="btn-add">+ Add Event</Button>
-      <Button @click="showAddHighlightForm" class="btn-highlight">+ Add Highlight</Button>
-      <Button @click="goToToday">Today</Button>
-      <Button @click="zoomIn">+</Button>
-      <Button @click="zoomOut">−</Button>
-      <Button @click="fitToData">Fit All</Button>
-      <span class="current-center">{{ formatDate(new Date(centerTime)) }}</span>
-      <span class="zoom-level">{{ getZoomLevelText() }}</span>
+    <div
+      ref="controlsRef"
+      class="timeline-controls"
+      :class="{ 'controls-dragging': isControlsDragging }"
+      :style="{
+        bottom: `${controlsPosition.bottom}px`,
+        left: `${controlsPosition.left}px`,
+        right: 'auto',
+        top: 'auto'
+      }"
+    >
+      <div
+        class="controls-handle"
+        @mousedown="startControlsDrag"
+        title="Drag to move controls"
+      >
+        <div class="handle-lines">
+          <div class="handle-line"></div>
+          <div class="handle-line"></div>
+          <div class="handle-line"></div>
+        </div>
+      </div>
+      <div class="controls-content">
+        <Button @click="showAddEventForm" class="btn-add">+ Add Event</Button>
+        <Button @click="showAddHighlightForm" class="btn-highlight">+ Add Highlight</Button>
+        <Button @click="goToToday">Today</Button>
+        <Button @click="zoomIn">+</Button>
+        <Button @click="zoomOut">−</Button>
+        <Button @click="fitToData">Fit All</Button>
+        <span class="current-center">{{ formatDate(new Date(centerTime)) }}</span>
+        <span class="zoom-level">{{ getZoomLevelText() }}</span>
+      </div>
     </div>
   </div>
 </template>
@@ -331,6 +354,12 @@ const dragStartX = ref(0)
 const dragStartTime = ref(0)
 const hasDragged = ref(false)
 const isRedrawing = ref(false)
+
+// Controls bar dragging state
+const controlsPosition = ref({ bottom: 150, left: 280 }) // Change these values to adjust initial position
+const isControlsDragging = ref(false)
+const controlsDragStart = ref({ x: 0, y: 0, left: 0, bottom: 0 })
+const controlsRef = ref<HTMLElement>()
 
 // Event management
 const events = ref<TimelineEvent[]>([...props.events])
@@ -1835,6 +1864,54 @@ function getHighlightStyle(highlight: TimelineHighlight, isOverview: boolean): R
 
   return styles;
 }
+
+// Controls drag functionality
+function startControlsDrag(event: MouseEvent): void {
+  event.preventDefault()
+  event.stopPropagation()
+
+  isControlsDragging.value = true
+  controlsDragStart.value = {
+    x: event.clientX,
+    y: event.clientY,
+    left: controlsPosition.value.left,
+    bottom: controlsPosition.value.bottom,
+  }
+
+  document.addEventListener('mousemove', handleControlsDrag)
+  document.addEventListener('mouseup', stopControlsDrag)
+  document.body.style.cursor = 'grabbing'
+}
+
+function handleControlsDrag(event: MouseEvent): void {
+  if (!isControlsDragging.value) return
+
+  const deltaX = event.clientX - controlsDragStart.value.x
+  const deltaY = event.clientY - controlsDragStart.value.y
+
+  // Calculate new position
+  const newLeft = Math.max(0, Math.min(
+    containerWidth.value - 400, // Approximate controls width
+    controlsDragStart.value.left + deltaX
+  ))
+
+  const newBottom = Math.max(20, Math.min(
+    containerHeight.value - 100, // Approximate controls height
+    controlsDragStart.value.bottom - deltaY // Subtract because bottom increases upward
+  ))
+
+  controlsPosition.value = {
+    left: newLeft,
+    bottom: newBottom,
+  }
+}
+
+function stopControlsDrag(): void {
+  isControlsDragging.value = false
+  document.removeEventListener('mousemove', handleControlsDrag)
+  document.removeEventListener('mouseup', stopControlsDrag)
+  document.body.style.cursor = ''
+}
 </script>
 
 <style scoped>
@@ -1981,17 +2058,62 @@ function getHighlightStyle(highlight: TimelineHighlight, isOverview: boolean): R
 
 .timeline-controls {
   position: absolute;
-  top: 15px;
-  right: 15px;
   background: var(--card);
   opacity: 0.95;
-  padding: 8px 12px;
   border-radius: var(--radius-md);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
   z-index: 1100;
   display: flex;
   align-items: center;
+  gap: 0;
+  user-select: none;
+  transition: box-shadow 0.2s ease;
+}
+
+.timeline-controls.controls-dragging {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  cursor: grabbing;
+}
+
+.controls-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  cursor: grab;
+  border-right: 1px solid var(--border);
+  border-radius: var(--radius-md) 0 0 var(--radius-md);
+  background: var(--muted);
+  transition: background-color 0.2s ease;
+}
+
+.controls-handle:hover {
+  background: var(--accent);
+}
+
+.controls-handle:active {
+  cursor: grabbing;
+}
+
+.handle-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.handle-line {
+  width: 12px;
+  height: 2px;
+  background: var(--muted-foreground);
+  border-radius: 1px;
+  opacity: 0.7;
+}
+
+.controls-content {
+  display: flex;
+  align-items: center;
   gap: 8px;
+  padding: 8px 12px;
 }
 
 .timeline-controls Button {
