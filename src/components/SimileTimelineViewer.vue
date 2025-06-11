@@ -132,7 +132,7 @@
       </div>
 
       <!-- Highlights in Detail Band -->
-      <div class="highlights-layer" v-if="highlights.length > 0">
+      <div class="highlights-layer" v-if="timelineStore.highlights.length > 0">
         <div
           v-for="highlight in visibleHighlights"
           :key="`hl-${highlight.id}`"
@@ -172,7 +172,7 @@
       </div>
 
       <!-- Highlights in Overview Band -->
-      <div class="highlights-layer overview-highlights-layer" v-if="highlights.length > 0">
+      <div class="highlights-layer overview-highlights-layer" v-if="timelineStore.highlights.length > 0">
         <div
           v-for="highlight in overviewVisibleHighlights"
           :key="`ovhl-${highlight.id}`"
@@ -300,14 +300,7 @@ interface TimelineEvent {
   track?: number
 }
 
-interface TimelineHighlight {
-  id: string
-  startDate: Date
-  endDate: Date
-  startLabel?: string
-  endLabel?: string
-  color: string
-}
+
 
 interface EventDetail {
   event: TimelineEvent
@@ -366,6 +359,10 @@ const events = ref<TimelineEvent[]>([...props.events])
 const draggedEventId = ref<string | null>(null)
 const eventDragStart = ref({ x: 0, y: 0, originalDate: new Date() })
 
+// Import the timeline store to save highlights
+import { useTimelineStore, type TimelineHighlight } from '@/stores/timelineStore'
+const timelineStore = useTimelineStore()
+
 // UI state
 const eventDetails = ref<EventDetail[]>([])
 const hoveredEventId = ref<string | null>(null)
@@ -388,7 +385,6 @@ const newEvent = ref({
 })
 
 // Highlights management
-const highlights = ref<TimelineHighlight[]>([])
 const showHighlightForm = ref(false)
 const newHighlight = ref({
   startDate: '',
@@ -524,7 +520,7 @@ const visibleHighlights = computed(() => {
   const startTime = centerTime.value - viewSpan
   const endTime = centerTime.value + viewSpan
 
-  return highlights.value.filter((highlight) => {
+  return timelineStore.highlights.filter((highlight: TimelineHighlight) => {
     return highlight.endDate.getTime() >= startTime && highlight.startDate.getTime() <= endTime
   })
 })
@@ -535,7 +531,7 @@ const overviewVisibleHighlights = computed(() => {
   const startTime = centerTime.value - viewSpan
   const endTime = centerTime.value + viewSpan
 
-  return highlights.value.filter((highlight) => {
+  return timelineStore.highlights.filter((highlight: TimelineHighlight) => {
     return highlight.endDate.getTime() >= startTime && highlight.startDate.getTime() <= endTime
   })
 })
@@ -1026,23 +1022,27 @@ function closeAddForm(): void {
   // If the event is re-added (which happens via a new event object usually), a new ref will be made.
 }
 
-function addEvent(): void {
-  const event: TimelineEvent = {
-    id: Date.now().toString(),
-    title: newEvent.value.title,
-    description: newEvent.value.description,
-    startDate: new Date(newEvent.value.startDate),
-    endDate:
-      newEvent.value.isRange && newEvent.value.endDate
-        ? new Date(newEvent.value.endDate)
-        : undefined,
-    color: newEvent.value.color,
-    image: newEvent.value.image,
-  }
+async function addEvent(): Promise<void> {
+  try {
+    await timelineStore.addEvent({
+      title: newEvent.value.title,
+      description: newEvent.value.description,
+      startDate: new Date(newEvent.value.startDate),
+      endDate:
+        newEvent.value.isRange && newEvent.value.endDate
+          ? new Date(newEvent.value.endDate)
+          : undefined,
+      color: newEvent.value.color,
+      image: newEvent.value.image,
+    })
 
-  events.value.push(event)
-  emit('events-updated', events.value)
-  closeAddForm()
+    // Update local events to match store
+    events.value = [...timelineStore.events]
+    emit('events-updated', events.value)
+    closeAddForm()
+  } catch (error) {
+    console.error('Failed to add event:', error)
+  }
 }
 
 function handleImageUpload(event: Event): void {
@@ -1258,8 +1258,21 @@ function handleEventDrag(mouseEvent: MouseEvent): void {
   }
 }
 
-function stopEventDrag(): void {
+async function stopEventDrag(): Promise<void> {
   if (draggedEventId.value) {
+    // Save the updated event to the store
+    const draggedEvent = events.value.find(e => e.id === draggedEventId.value)
+    if (draggedEvent) {
+      try {
+        await timelineStore.updateEvent(draggedEvent.id, {
+          startDate: draggedEvent.startDate,
+          endDate: draggedEvent.endDate
+        })
+      } catch (error) {
+        console.error('Failed to save event position:', error)
+      }
+    }
+
     emit('events-updated', events.value)
     draggedEventId.value = null
   }
@@ -1290,16 +1303,20 @@ function editEvent(event: TimelineEvent): void {
   showAddForm.value = true
 }
 
-function deleteEvent(id: string): void {
-  const index = events.value.findIndex((e) => e.id === id)
-  if (index >= 0) {
-    events.value.splice(index, 1)
+async function deleteEvent(id: string): Promise<void> {
+  try {
+    await timelineStore.deleteEvent(id)
+
+    // Update local events to match store
+    events.value = [...timelineStore.events]
     eventTracks.value.delete(id)
     emit('events-updated', events.value)
-  }
 
-  // Also remove any open details for this event
-  removeEventDetail(id)
+    // Also remove any open details for this event
+    removeEventDetail(id)
+  } catch (error) {
+    console.error('Failed to delete event:', error)
+  }
 }
 
 function removeEventDetail(id: string): void {
@@ -1668,9 +1685,27 @@ const setDetailPanelRef = (el: HTMLElement | null, id: string) => {
 }
 
 // Lifecycle
-onMounted(() => {
-  centerTime.value = new Date().getTime()
-  pixelsPerDay.value = 100
+onMounted(async () => {
+  // Initialize timeline store if not already done
+  if (!timelineStore.currentTimeline) {
+    try {
+      await timelineStore.initialize()
+    } catch (error) {
+      console.error('Failed to initialize timeline store:', error)
+    }
+  }
+
+  // Sync local events with store
+  events.value = [...timelineStore.events]
+
+  // Set initial timeline settings
+  if (timelineStore.currentTimeline) {
+    centerTime.value = timelineStore.settings.centerDate.getTime()
+    pixelsPerDay.value = timelineStore.settings.pixelsPerDay
+  } else {
+    centerTime.value = new Date().getTime()
+    pixelsPerDay.value = 100
+  }
 
   resizeHandler()
   window.addEventListener('resize', resizeHandler)
@@ -1788,19 +1823,20 @@ function closeHighlightForm(): void {
   }
 }
 
-function addHighlight(): void {
-  const highlight: TimelineHighlight = {
-    id: `highlight-${Date.now()}`,
-    startDate: new Date(newHighlight.value.startDate),
-    endDate: new Date(newHighlight.value.endDate),
-    startLabel: newHighlight.value.startLabel || undefined,
-    endLabel: newHighlight.value.endLabel || undefined,
-    color: newHighlight.value.color,
+async function addHighlight(): Promise<void> {
+  try {
+    await timelineStore.addHighlight({
+      startDate: new Date(newHighlight.value.startDate),
+      endDate: new Date(newHighlight.value.endDate),
+      startLabel: newHighlight.value.startLabel || undefined,
+      endLabel: newHighlight.value.endLabel || undefined,
+      color: newHighlight.value.color,
+    })
+    closeHighlightForm()
+    redrawCanvases()
+  } catch (error) {
+    console.error('Failed to add highlight:', error)
   }
-
-  highlights.value.push(highlight)
-  closeHighlightForm()
-  redrawCanvases()
 }
 
 function getHighlightStyle(highlight: TimelineHighlight, isOverview: boolean): Record<string, string> {

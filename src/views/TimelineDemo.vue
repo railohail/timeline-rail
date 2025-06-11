@@ -1,300 +1,473 @@
 <template>
-  <div class="simile-timeline-demo">
-    <SimileTimelineViewer :events="timelineEvents" :center-date="centerDate" />
+  <div class="timeline-demo">
+    <!-- Navigation Tabs -->
+    <div class="demo-tabs">
+      <button
+        @click="activeTab = 'viewer'"
+        :class="{ active: activeTab === 'viewer' }"
+        class="tab-button"
+      >
+        Timeline Viewer
+      </button>
+      <button
+        @click="activeTab = 'manager'"
+        :class="{ active: activeTab === 'manager' }"
+        class="tab-button"
+      >
+        Timeline Manager
+      </button>
+    </div>
+
+    <!-- Timeline Viewer Tab -->
+    <div v-if="activeTab === 'viewer'" class="tab-content">
+      <div class="viewer-header">
+        <h2>Timeline Viewer</h2>
+        <div class="viewer-info" v-if="timelineStore.currentTimeline">
+          <span>{{ timelineStore.currentTimeline.name }}</span>
+          <span class="event-count">{{ timelineStore.events.length }} events</span>
+          <span class="highlight-count">{{ timelineStore.highlights.length }} highlights</span>
+        </div>
+      </div>
+
+      <SimileTimelineViewer
+        :events="timelineStore.events"
+        :center-date="timelineStore.settings.centerDate"
+        @events-updated="handleEventsUpdated"
+      />
+    </div>
+
+    <!-- Timeline Manager Tab -->
+    <div v-if="activeTab === 'manager'" class="tab-content">
+      <TimelineManager />
+    </div>
+
+    <!-- Quick Actions Floating Panel -->
+    <div class="quick-actions" v-if="activeTab === 'viewer'">
+      <div class="actions-header">
+        <h4>Quick Actions</h4>
+        <button @click="showQuickActions = !showQuickActions" class="toggle-btn">
+          {{ showQuickActions ? '−' : '+' }}
+        </button>
+      </div>
+      <div v-if="showQuickActions" class="actions-content">
+        <button @click="saveTimeline" class="action-btn save-btn">
+          💾 Save Timeline
+        </button>
+        <button @click="exportTimeline" class="action-btn export-btn">
+          📤 Export Timeline
+        </button>
+        <button @click="switchToManager" class="action-btn manager-btn">
+          ⚙️ Manage Timelines
+        </button>
+        <div class="auto-save-toggle">
+          <label>
+            <input v-model="autoSave" type="checkbox" />
+            Auto-save changes
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div class="status-bar">
+      <div class="status-left">
+        <span v-if="timelineStore.isLoading" class="status-item loading">
+          🔄 Loading...
+        </span>
+        <span v-else-if="timelineStore.error" class="status-item error">
+          ❌ {{ timelineStore.error }}
+        </span>
+        <span v-else class="status-item success">
+          ✅ Ready
+        </span>
+      </div>
+      <div class="status-right">
+        <span class="status-item">
+          Storage: {{ getStorageType() }}
+        </span>
+        <span class="status-item" v-if="timelineStore.currentTimeline">
+          Last saved: {{ formatLastSaved() }}
+        </span>
+      </div>
+    </div>
+
+    <!-- Debug Panel -->
+    <DebugPanel />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import SimileTimelineViewer from '@/components/SimileTimelineViewer.vue'
+import TimelineManager from '@/components/TimelineManager.vue'
+import DebugPanel from '@/components/DebugPanel.vue'
+import { useTimelineStore } from '@/stores/timelineStore'
+import type { TimelineEvent } from '@/stores/timelineStore'
 
-interface TimelineEvent {
-  id: string
-  title: string
-  startDate: Date
-  endDate?: Date
-  description?: string
-  color?: string
-  isDuration?: boolean
-  category?: string
-  image?: string
-  link?: string
+const timelineStore = useTimelineStore()
+
+// UI State
+const activeTab = ref<'viewer' | 'manager'>('viewer')
+const showQuickActions = ref(true)
+const autoSave = ref(true)
+const lastSaveTime = ref<Date | null>(null)
+
+// Methods
+async function handleEventsUpdated(events: TimelineEvent[]): Promise<void> {
+  // Update the store with new events
+  if (timelineStore.currentTimeline) {
+    timelineStore.currentTimeline.events = events
+
+    // Auto-save if enabled
+    if (autoSave.value) {
+      await saveTimeline()
+    }
+  }
 }
 
-const centerDate = ref(new Date('1963-11-22T13:00:00-06:00'))
+async function saveTimeline(): Promise<void> {
+  try {
+    await timelineStore.saveCurrentTimeline()
+    lastSaveTime.value = new Date()
+  } catch (error) {
+    console.error('Failed to save timeline:', error)
+  }
+}
 
-// JFK Timeline events based on the SIMILE Timeline example
-const timelineEvents = ref<TimelineEvent[]>([
-  {
-    id: '1',
-    title: "'Bay of Pigs' Invasion",
-    startDate: new Date('1961-05-20T00:00:00-06:00'),
-    description: 'Failed invasion of Cuba by CIA-sponsored paramilitary groups.',
-    color: '#e74c3c',
-    category: 'politics',
+async function exportTimeline(): Promise<void> {
+  try {
+    if (!timelineStore.currentTimeline) return
+
+    const blob = await timelineStore.exportTimeline()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${timelineStore.currentTimeline.name}-${new Date().toISOString().split('T')[0]}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    console.error('Failed to export timeline:', error)
+  }
+}
+
+function switchToManager(): void {
+  activeTab.value = 'manager'
+}
+
+function getStorageType(): string {
+  if (typeof window !== 'undefined' && 'indexedDB' in window) {
+    return 'IndexedDB'
+  }
+  return 'LocalStorage'
+}
+
+function formatLastSaved(): string {
+  if (!lastSaveTime.value && timelineStore.currentTimeline) {
+    return new Date(timelineStore.currentTimeline.updatedAt).toLocaleTimeString()
+  }
+  return lastSaveTime.value ? lastSaveTime.value.toLocaleTimeString() : 'Never'
+}
+
+// Auto-save watcher with debouncing
+let autoSaveTimeout: number | null = null
+
+watch(
+  () => timelineStore.currentTimeline?.events,
+  async () => {
+    if (autoSave.value && timelineStore.currentTimeline) {
+      // Clear existing timeout
+      if (autoSaveTimeout) {
+        clearTimeout(autoSaveTimeout)
+      }
+
+      // Debounce auto-save
+      autoSaveTimeout = setTimeout(async () => {
+        try {
+          await saveTimeline()
+        } catch (error) {
+          console.error('Auto-save failed:', error)
+        }
+      }, 2000) // 2 second delay
+    }
   },
-  {
-    id: '2',
-    title: 'Oswald moves to New Orleans',
-    startDate: new Date('1963-05-01T00:00:00-06:00'),
-    endDate: new Date('1963-06-01T00:00:00-06:00'),
-    isDuration: true,
-    description:
-      'Oswald moves to New Orleans, and finds employment at the William B. Riley Coffee Company.',
-    color: '#f39c12',
-    category: 'investigation',
+  { deep: true }
+)
+
+// Also watch highlights
+watch(
+  () => timelineStore.currentTimeline?.highlights,
+  async () => {
+    if (autoSave.value && timelineStore.currentTimeline) {
+      if (autoSaveTimeout) {
+        clearTimeout(autoSaveTimeout)
+      }
+
+      autoSaveTimeout = setTimeout(async () => {
+        try {
+          await saveTimeline()
+        } catch (error) {
+          console.error('Auto-save failed:', error)
+        }
+      }, 2000)
+    }
   },
-  {
-    id: '3',
-    title: 'General Walker shot',
-    startDate: new Date('1963-05-10T00:00:00-06:00'),
-    description: 'General Walker shot at in his home.',
-    color: '#e74c3c',
-    category: 'violence',
-  },
-  {
-    id: '4',
-    title: 'Kennedy, Johnson, Connelly met',
-    startDate: new Date('1963-06-05T00:00:00-06:00'),
-    description:
-      'Decision for Texas trip made at meeting with Kennedy, Johnson, and Connelly at the Cortez hotel in El Paso Texas.',
-    color: '#3498db',
-    category: 'politics',
-  },
-  {
-    id: '5',
-    title: 'Maurice Bishop seen speaking to Oswald',
-    startDate: new Date('1963-09-25T00:00:00-06:00'),
-    description:
-      'Antonio Veciana travels to Dallas for a meeting with Maurice Bishop (a.k.a. David Atlee Phillips). In the lobby of the Southland building, Veciana sees Bishop speaking to a man Veciana later identifies as Lee Harvey Oswald.',
-    color: '#9b59b6',
-    category: 'investigation',
-  },
-  {
-    id: '6',
-    title: "CIA's growth a malignancy",
-    startDate: new Date('1963-10-01T00:00:00-06:00'),
-    description:
-      'Reporter Arthur Krock writes: "The CIA\'s growth was likened to a malignancy which the very high official was not sure even the White House could control any longer."',
-    color: '#34495e',
-    category: 'politics',
-  },
-  {
-    id: '7',
-    title: 'Kennedy signs NSAM 263',
-    startDate: new Date('1963-10-11T00:00:00-06:00'),
-    description:
-      'Kennedy signs National Security Action Memorandum (NSAM) #263, signalling his intention to withdraw troops from Vietnam.',
-    color: '#27ae60',
-    category: 'politics',
-  },
-  {
-    id: '8',
-    title: 'Oswald begins job at TSBD',
-    startDate: new Date('1963-10-16T00:00:00-06:00'),
-    description:
-      'Oswald begins job at Texas School Book Depository. He reportedly obtained it through a contact of Ruth Paine.',
-    color: '#f39c12',
-    category: 'investigation',
-  },
-  {
-    id: '9',
-    title: 'Oswald purchased rifle',
-    startDate: new Date('1963-10-23T00:00:00-06:00'),
-    description: "Ruth Paine makes notation on her calendar 'LHO purchase of rifle.'",
-    color: '#e74c3c',
-    category: 'investigation',
-  },
-  {
-    id: '10',
-    title: 'Lawson receives Texas trip schedule',
-    startDate: new Date('1963-11-08T00:00:00-06:00'),
-    description:
-      'SS Agent Winston Lawson is briefed and receives a tentative schedule of Texas trip from SS Agent Roy H Kellerman.',
-    color: '#3498db',
-    category: 'security',
-  },
-  {
-    id: '11',
-    title: 'Governor Connelly confirms trip',
-    startDate: new Date('1963-11-08T00:00:00-06:00'),
-    description: 'Governor Connelly confirms trip to Dallas on November 21 - 22, 1963.',
-    color: '#3498db',
-    category: 'politics',
-  },
-  {
-    id: '12',
-    title: 'Oswald writes to Mr. Hunt',
-    startDate: new Date('1963-11-08T00:00:00-06:00'),
-    description:
-      'Oswald writes to "Dear Mr. Hunt, I would like more information concerning my position. I am asking only for information."',
-    color: '#9b59b6',
-    category: 'investigation',
-  },
-  {
-    id: '13',
-    title: 'Oswald delivers note to Dallas FBI HQ',
-    startDate: new Date('1963-11-08T00:00:00-06:00'),
-    description:
-      'Oswald delivers a note to Dallas FBI HQ where Agent James Hosty is told to destroy it by Special Agent in Charge, Gordon Shanklin.',
-    color: '#e67e22',
-    category: 'investigation',
-  },
-  {
-    id: '14',
-    title: 'SS Agents test-drive route',
-    startDate: new Date('1963-11-14T00:00:00-06:00'),
-    description:
-      'SS Agents Lawson and Sorrels drive route from Lovefield to Trademart which went down Main street to Stemmons freeway.',
-    color: '#3498db',
-    category: 'security',
-  },
-  {
-    id: '15',
-    title: 'Motorcade route reviewed, unchanged',
-    startDate: new Date('1963-11-15T00:00:00-06:00'),
-    description: 'Motorcade route reviewed but was unchanged.',
-    color: '#3498db',
-    category: 'security',
-  },
-  {
-    id: '16',
-    title: 'Dallas Times Herald reports route',
-    startDate: new Date('1963-11-16T00:00:00-06:00'),
-    description:
-      'Dallas Times Herald reported that the Presidential motorcade "apparently will loop through downtown area, probably on Main street on its way to Trade Mart".',
-    color: '#16a085',
-    category: 'media',
-  },
-  {
-    id: '17',
-    title: 'FBI calls to determine potential threat',
-    startDate: new Date('1963-11-17T00:00:00-06:00'),
-    description:
-      'An FBI teletype is received, directed to all field offices to contact CIs (confidential informants) to determine whether a revolutionary group was a potential threat to the president.',
-    color: '#e67e22',
-    category: 'security',
-  },
-  {
-    id: '18',
-    title: 'Motorcade timing verified',
-    startDate: new Date('1963-11-18T00:00:00-06:00'),
-    description:
-      'SS Agents Lawson and Sorrels with Dallas police assistant Chief Charles Batchelor drive motorcade route verifying that it could be driven in 45 minutes.',
-    color: '#3498db',
-    category: 'security',
-  },
-  {
-    id: '19',
-    title: 'Newspaper published precise route',
-    startDate: new Date('1963-11-19T00:00:00-06:00'),
-    description:
-      'Newspaper published precise route mentioning the turn into Elm into Houston then onto the freeway.',
-    color: '#16a085',
-    category: 'media',
-  },
-  {
-    id: '20',
-    title: 'Mock target practice witnessed',
-    startDate: new Date('1963-11-20T00:00:00-06:00'),
-    description:
-      'Two Dallas police officers witness a "mock target practice" going on at the picket fence atop the knoll.',
-    color: '#e74c3c',
-    category: 'investigation',
-  },
-  {
-    id: '21',
-    title: 'Rose Cheramie warns of assassination',
-    startDate: new Date('1963-11-20T00:00:00-06:00'),
-    description:
-      'Rose Cheramie is thrown from a car, taken to hospital, and while there tells doctors that JFK is going to be killed in Dallas.',
-    color: '#e74c3c',
-    category: 'warning',
-  },
-  {
-    id: '22',
-    title: 'Bundy signs 1st draft of NSAM 273',
-    startDate: new Date('1963-11-21T00:00:00-06:00'),
-    description:
-      'McGeorge Bundy, then assistant to President Kennedy, signs the key first draft of NSAM 273, in contradiction to all previous Kennedy policy.',
-    color: '#34495e',
-    category: 'politics',
-  },
-  {
-    id: '23',
-    title: 'Man with rifle spotted on Elm St.',
-    startDate: new Date('1963-11-22T11:00:00-06:00'),
-    description:
-      'Julia Ann Mercer drives down Elm street, her way is blocked by a green Ford pickup truck. A young man removes a long paper bag with the outline of a rifle.',
-    color: '#e74c3c',
-    category: 'investigation',
-  },
-  {
-    id: '24',
-    title: 'Air Force One leaves Fort Worth',
-    startDate: new Date('1963-11-22T11:10:00-06:00'),
-    description:
-      'Air Force One leaves Carswell AFB Fort Worth for 13 min flight to Lovefield Airport.',
-    color: '#3498db',
-    category: 'travel',
-  },
-  {
-    id: '25',
-    title: 'Motorcade leaves Lovefield Airport',
-    startDate: new Date('1963-11-22T11:30:00-06:00'),
-    description: 'Presidential Motorcade leaves Lovefield Airport.',
-    color: '#3498db',
-    category: 'travel',
-    image: 'motorcade.png',
-  },
-  {
-    id: '26',
-    title: 'Motorcade arrives at Love Field',
-    startDate: new Date('1963-11-22T11:45:00-06:00'),
-    description: 'The presidential motorcade arrives at Love Field airport in Dallas.',
-    color: '#27ae60',
-    category: 'travel',
-  },
-  {
-    id: '27',
-    title: 'JFK Assassination',
-    startDate: new Date('1963-11-22T12:30:00-06:00'),
-    description: 'President John F. Kennedy is assassinated in Dealey Plaza, Dallas, Texas.',
-    color: '#c0392b',
-    category: 'assassination',
-  },
-  {
-    id: '28',
-    title: 'JFK pronounced dead',
-    startDate: new Date('1963-11-22T13:00:00-06:00'),
-    description: 'President Kennedy is pronounced dead at Parkland Hospital.',
-    color: '#8b0000',
-    category: 'assassination',
-  },
-  {
-    id: '29',
-    title: 'Oswald arrested',
-    startDate: new Date('1963-11-22T13:15:00-06:00'),
-    description: 'Lee Harvey Oswald is arrested at the Texas Theatre.',
-    color: '#f39c12',
-    category: 'investigation',
-  },
-  {
-    id: '30',
-    title: 'Johnson sworn in as President',
-    startDate: new Date('1963-11-22T14:38:00-06:00'),
-    description:
-      'Lyndon B. Johnson is sworn in as the 36th President of the United States aboard Air Force One.',
-    color: '#2980b9',
-    category: 'politics',
-  },
-])
+  { deep: true }
+)
+
+// Initialize
+onMounted(async () => {
+  try {
+    await timelineStore.initialize()
+  } catch (error) {
+    console.error('Failed to initialize timeline store:', error)
+  }
+})
 </script>
 
 <style scoped>
-.simile-timeline-demo {
+.timeline-demo {
   width: 100%;
   height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.demo-tabs {
+  display: flex;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  padding: 0 20px;
+}
+
+.tab-button {
+  padding: 12px 24px;
+  background: none;
+  border: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.tab-button:hover {
+  color: var(--foreground);
+  background: var(--accent);
+}
+
+.tab-button.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+.tab-content {
+  flex: 1;
   overflow: hidden;
+  position: relative;
+}
+
+.viewer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+
+.viewer-header h2 {
+  margin: 0;
+  color: var(--card-foreground);
+}
+
+.viewer-info {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  font-size: 14px;
+}
+
+.viewer-info span {
+  color: var(--muted-foreground);
+}
+
+.event-count,
+.highlight-count {
+  background: var(--muted);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.quick-actions {
+  position: fixed;
+  top: 120px;
+  right: 20px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 1000;
+  min-width: 200px;
+}
+
+.actions-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.actions-header h4 {
+  margin: 0;
+  color: var(--card-foreground);
+  font-size: 14px;
+}
+
+.toggle-btn {
+  background: none;
+  border: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  font-size: 16px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+}
+
+.toggle-btn:hover {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.actions-content {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.action-btn {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--background);
+  color: var(--foreground);
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+  transition: all 0.2s ease;
+}
+
+.action-btn:hover {
+  background: var(--accent);
+}
+
+.save-btn:hover {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+
+.export-btn:hover {
+  background: var(--secondary);
+  color: var(--secondary-foreground);
+}
+
+.manager-btn:hover {
+  background: var(--accent);
+}
+
+.auto-save-toggle {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+.auto-save-toggle label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+
+.auto-save-toggle input[type="checkbox"] {
+  margin: 0;
+}
+
+.status-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 20px;
+  background: var(--muted);
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.status-left,
+.status-right {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.status-item {
+  color: var(--muted-foreground);
+}
+
+.status-item.loading {
+  color: var(--primary);
+}
+
+.status-item.error {
+  color: var(--destructive);
+}
+
+.status-item.success {
+  color: var(--primary);
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .quick-actions {
+    position: static;
+    margin: 16px;
+    order: -1;
+  }
+
+  .viewer-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .viewer-info {
+    flex-wrap: wrap;
+  }
+
+  .status-bar {
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  .status-left,
+  .status-right {
+    width: 100%;
+    justify-content: space-between;
+  }
 }
 </style>

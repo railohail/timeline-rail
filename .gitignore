@@ -33,3 +33,21 @@ dist-ssr
 
 *.tsbuildinfo
 timeline
+events.xml
+
+# Timeline application data
+timeline-data/
+*.timeline.json
+*.timeline.backup
+
+# User uploaded images
+uploads/
+user-images/
+
+# Export files
+exports/
+timeline-exports/
+
+# Local storage backups (if any)
+*.localstorage
+*.indexeddb
