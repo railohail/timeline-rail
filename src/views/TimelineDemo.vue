@@ -92,7 +92,7 @@
     </div>
 
     <!-- Debug Panel -->
-    <DebugPanel />
+    <!-- <DebugPanel /> -->
   </div>
 </template>
 
@@ -100,7 +100,7 @@
 import { ref, onMounted, watch } from 'vue'
 import SimileTimelineViewer from '@/components/SimileTimelineViewer.vue'
 import TimelineManager from '@/components/TimelineManager.vue'
-import DebugPanel from '@/components/DebugPanel.vue'
+// import DebugPanel from '@/components/DebugPanel.vue'
 import { useTimelineStore } from '@/stores/timelineStore'
 import type { TimelineEvent } from '@/stores/timelineStore'
 

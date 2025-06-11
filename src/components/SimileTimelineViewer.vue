@@ -275,8 +275,16 @@
         <Button @click="showAddEventForm" class="btn-add">+ Add Event</Button>
         <Button @click="showAddHighlightForm" class="btn-highlight">+ Add Highlight</Button>
         <Button @click="goToToday">Today</Button>
-        <Button @click="zoomIn">+</Button>
-        <Button @click="zoomOut">−</Button>
+        <Button
+          @click="zoomIn"
+          :disabled="Math.abs(pixelsPerDay - maxPixelsPerDay) < 0.01"
+          :class="{ 'btn-disabled': Math.abs(pixelsPerDay - maxPixelsPerDay) < 0.01 }"
+        >+</Button>
+        <Button
+          @click="zoomOut"
+          :disabled="Math.abs(pixelsPerDay - minPixelsPerDay) < 0.01"
+          :class="{ 'btn-disabled': Math.abs(pixelsPerDay - minPixelsPerDay) < 0.01 }"
+        >−</Button>
         <Button @click="fitToData">Fit All</Button>
         <span class="current-center">{{ formatDate(new Date(centerTime)) }}</span>
         <span class="zoom-level">{{ getZoomLevelText() }}</span>
@@ -419,21 +427,14 @@ const defaultEventColor = computed(() => {
 })
 
 // Computed properties for adaptive zoom
-const timeSpan = computed(() => {
-  if (events.value.length === 0) return YEAR_MS
-  const dates = events.value.map((e) => e.startDate.getTime())
-  const minTime = Math.min(...dates)
-  const maxTime = Math.max(...dates)
-  return Math.max(maxTime - minTime, DAY_MS)
-})
-
 const minPixelsPerDay = computed(() => {
-  const totalDays = timeSpan.value / DAY_MS
-  return Math.max(0.1, (containerWidth.value * 3) / totalDays)
+  // Set a reasonable minimum that allows viewing decades/centuries
+  // Don't make it dependent on events to avoid zoom lock
+  return Math.max(0.01, containerWidth.value / (100 * 365)) // Can view ~100 years
 })
 
 const maxPixelsPerDay = computed(() => {
-  return 100 * 24 // 2400 pixels per day
+  return 200 * 24 // 4800 pixels per day (very detailed view)
 })
 
 const zoomLevel = computed(() => {
@@ -720,15 +721,21 @@ function stopDrag(): void {
 function handleZoom(event: WheelEvent): void {
   event.preventDefault()
 
-  const zoomFactor = event.deltaY < 0 ? 1.4 : 0.71
+  // Use consistent zoom factors and make them more responsive
+  const zoomFactor = event.deltaY < 0 ? 1.2 : 1 / 1.2
   const newPixelsPerDay = pixelsPerDay.value * zoomFactor
 
-  pixelsPerDay.value = Math.max(
+  // Apply zoom limits
+  const clampedValue = Math.max(
     minPixelsPerDay.value,
     Math.min(maxPixelsPerDay.value, newPixelsPerDay),
   )
 
-  redrawCanvases()
+  // Only update if the value actually changes (prevents zoom lock)
+  if (Math.abs(clampedValue - pixelsPerDay.value) > 0.001) {
+    pixelsPerDay.value = clampedValue
+    redrawCanvases()
+  }
 }
 
 function goToToday(): void {
@@ -737,33 +744,49 @@ function goToToday(): void {
 }
 
 function zoomIn(): void {
-  const newPixelsPerDay = Math.min(maxPixelsPerDay.value, pixelsPerDay.value * 1.5)
-  pixelsPerDay.value = newPixelsPerDay
-  redrawCanvases()
+  const zoomFactor = 1.2
+  const newPixelsPerDay = Math.min(maxPixelsPerDay.value, pixelsPerDay.value * zoomFactor)
+
+  if (Math.abs(newPixelsPerDay - pixelsPerDay.value) > 0.001) {
+    pixelsPerDay.value = newPixelsPerDay
+    redrawCanvases()
+  }
 }
 
 function zoomOut(): void {
-  const newPixelsPerDay = Math.max(minPixelsPerDay.value, pixelsPerDay.value / 1.5)
-  pixelsPerDay.value = newPixelsPerDay
-  redrawCanvases()
+  const zoomFactor = 1 / 1.2
+  const newPixelsPerDay = Math.max(minPixelsPerDay.value, pixelsPerDay.value * zoomFactor)
+
+  if (Math.abs(newPixelsPerDay - pixelsPerDay.value) > 0.001) {
+    pixelsPerDay.value = newPixelsPerDay
+    redrawCanvases()
+  }
 }
 
 function fitToData(): void {
-  if (events.value.length === 0) return
+  if (events.value.length === 0) {
+    // If no events, show a reasonable default view (1 year)
+    pixelsPerDay.value = containerWidth.value / 365
+    centerTime.value = Date.now()
+    redrawCanvases()
+    return
+  }
 
   const dates = events.value.map((e) => e.startDate.getTime())
   const minTime = Math.min(...dates)
   const maxTime = Math.max(...dates)
-  const span = maxTime - minTime
+  const span = Math.max(maxTime - minTime, DAY_MS) // At least 1 day
   const padding = span * 0.1
 
   centerTime.value = (minTime + maxTime) / 2
 
   const totalSpan = span + 2 * padding
   const totalDays = totalSpan / DAY_MS
+  const idealPixelsPerDay = (containerWidth.value * 0.8) / totalDays
+
   pixelsPerDay.value = Math.max(
     minPixelsPerDay.value,
-    Math.min(maxPixelsPerDay.value, (containerWidth.value * 0.8) / totalDays),
+    Math.min(maxPixelsPerDay.value, idealPixelsPerDay),
   )
 
   redrawCanvases()
@@ -896,11 +919,21 @@ function formatTimeLabel(date: Date, format: string, isOverview = false): string
 
 function getZoomLevelText(): string {
   const viewSpanDays = containerWidth.value / pixelsPerDay.value
-  if (viewSpanDays > 3650) return `${Math.round(viewSpanDays / 365)} years`
-  if (viewSpanDays > 365) return `${Math.round(viewSpanDays / 30)} months`
-  if (viewSpanDays > 30) return `${Math.round(viewSpanDays)} days`
-  if (viewSpanDays > 1) return `${Math.round(viewSpanDays * 24)} hours`
-  return `${Math.round(viewSpanDays * 24 * 60)} minutes`
+  const isAtMinZoom = Math.abs(pixelsPerDay.value - minPixelsPerDay.value) < 0.01
+  const isAtMaxZoom = Math.abs(pixelsPerDay.value - maxPixelsPerDay.value) < 0.01
+
+  let zoomText = ''
+  if (viewSpanDays > 3650) zoomText = `${Math.round(viewSpanDays / 365)} years`
+  else if (viewSpanDays > 365) zoomText = `${Math.round(viewSpanDays / 30)} months`
+  else if (viewSpanDays > 30) zoomText = `${Math.round(viewSpanDays)} days`
+  else if (viewSpanDays > 1) zoomText = `${Math.round(viewSpanDays * 24)} hours`
+  else zoomText = `${Math.round(viewSpanDays * 24 * 60)} minutes`
+
+  // Add zoom limit indicators
+  if (isAtMinZoom) zoomText += ' (min)'
+  else if (isAtMaxZoom) zoomText += ' (max)'
+
+  return zoomText
 }
 
 function formatDate(date: Date): string {
@@ -2168,6 +2201,19 @@ function stopControlsDrag(): void {
   background: var(--muted);
 }
 
+.timeline-controls Button:disabled,
+.timeline-controls Button.btn-disabled {
+  background: var(--muted) !important;
+  color: var(--muted-foreground) !important;
+  cursor: not-allowed !important;
+  opacity: 0.5;
+}
+
+.timeline-controls Button:disabled:hover,
+.timeline-controls Button.btn-disabled:hover {
+  background: var(--muted) !important;
+}
+
 .btn-add {
   background: var(--primary) !important;
   color: var(--primary-foreground) !important;
@@ -2614,5 +2660,11 @@ function stopControlsDrag(): void {
 .dark .highlight-label {
   background: var(--background);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.btn-disabled {
+  background-color: #ccc;
+  color: #999;
+  cursor: not-allowed;
 }
 </style>

@@ -35,6 +35,22 @@
       </div>
 
       <div class="debug-section">
+        <h5>Zoom Debug</h5>
+        <div class="debug-item">
+          <label>Pixels Per Day:</label>
+          <span>{{ timelineStore.settings?.pixelsPerDay?.toFixed(2) || 'N/A' }}</span>
+        </div>
+        <div class="debug-item">
+          <label>Can Zoom In:</label>
+          <span>{{ canZoomIn ? '✅' : '❌' }}</span>
+        </div>
+        <div class="debug-item">
+          <label>Can Zoom Out:</label>
+          <span>{{ canZoomOut ? '✅' : '❌' }}</span>
+        </div>
+      </div>
+
+      <div class="debug-section">
         <h5>Storage Test</h5>
         <div class="debug-actions">
           <button @click="testSave" class="debug-btn">Test Save</button>
@@ -63,12 +79,26 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useTimelineStore } from '@/stores/timelineStore'
 
 const timelineStore = useTimelineStore()
 const showDebug = ref(false)
 const testResult = ref('')
+
+// Zoom debugging
+const canZoomIn = computed(() => {
+  const current = timelineStore.settings?.pixelsPerDay || 50
+  const max = 200 * 24 // Same as maxPixelsPerDay in timeline viewer
+  return Math.abs(current - max) > 0.01
+})
+
+const canZoomOut = computed(() => {
+  const current = timelineStore.settings?.pixelsPerDay || 50
+  const containerWidth = 1200 // Approximate
+  const min = Math.max(0.01, containerWidth / (100 * 365))
+  return Math.abs(current - min) > 0.01
+})
 
 async function testSave() {
   try {
