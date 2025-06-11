@@ -42,7 +42,29 @@
     </div>
 
     <!-- Quick Actions Floating Panel -->
-    <div class="quick-actions" v-if="activeTab === 'viewer'">
+    <div
+      v-if="activeTab === 'viewer'"
+      ref="quickActionsRef"
+      class="quick-actions"
+      :class="{ 'actions-dragging': isQuickActionsDragging }"
+      :style="{
+        top: `${quickActionsPosition.top}px`,
+        right: `${quickActionsPosition.right}px`,
+        left: 'auto',
+        bottom: 'auto'
+      }"
+    >
+      <div
+        class="actions-handle"
+        @mousedown="startQuickActionsDrag"
+        title="Drag to move panel"
+      >
+        <div class="handle-lines">
+          <div class="handle-line"></div>
+          <div class="handle-line"></div>
+          <div class="handle-line"></div>
+        </div>
+      </div>
       <div class="actions-header">
         <h4>Quick Actions</h4>
         <button @click="showQuickActions = !showQuickActions" class="toggle-btn">
@@ -108,9 +130,15 @@ const timelineStore = useTimelineStore()
 
 // UI State
 const activeTab = ref<'viewer' | 'manager'>('viewer')
-const showQuickActions = ref(true)
+const showQuickActions = ref(false)
 const autoSave = ref(true)
 const lastSaveTime = ref<Date | null>(null)
+
+// Quick Actions dragging state
+const quickActionsPosition = ref({ top: 1, right: 20 })
+const isQuickActionsDragging = ref(false)
+const quickActionsDragStart = ref({ x: 0, y: 0, top: 0, right: 0 })
+const quickActionsRef = ref<HTMLElement>()
 
 // Methods
 async function handleEventsUpdated(events: TimelineEvent[]): Promise<void> {
@@ -168,6 +196,54 @@ function formatLastSaved(): string {
     return new Date(timelineStore.currentTimeline.updatedAt).toLocaleTimeString()
   }
   return lastSaveTime.value ? lastSaveTime.value.toLocaleTimeString() : 'Never'
+}
+
+// Quick Actions drag functionality
+function startQuickActionsDrag(event: MouseEvent): void {
+  event.preventDefault()
+  event.stopPropagation()
+
+  isQuickActionsDragging.value = true
+  quickActionsDragStart.value = {
+    x: event.clientX,
+    y: event.clientY,
+    top: quickActionsPosition.value.top,
+    right: quickActionsPosition.value.right,
+  }
+
+  document.addEventListener('mousemove', handleQuickActionsDrag)
+  document.addEventListener('mouseup', stopQuickActionsDrag)
+  document.body.style.cursor = 'grabbing'
+}
+
+function handleQuickActionsDrag(event: MouseEvent): void {
+  if (!isQuickActionsDragging.value) return
+
+  const deltaX = event.clientX - quickActionsDragStart.value.x
+  const deltaY = event.clientY - quickActionsDragStart.value.y
+
+  // Calculate new position
+  const newRight = Math.max(20, Math.min(
+    window.innerWidth - 220, // Approximate panel width
+    quickActionsDragStart.value.right - deltaX // Subtract because right increases leftward
+  ))
+
+  const newTop = Math.max(20, Math.min(
+    window.innerHeight - 300, // Approximate panel height
+    quickActionsDragStart.value.top + deltaY
+  ))
+
+  quickActionsPosition.value = {
+    right: newRight,
+    top: newTop,
+  }
+}
+
+function stopQuickActionsDrag(): void {
+  isQuickActionsDragging.value = false
+  document.removeEventListener('mousemove', handleQuickActionsDrag)
+  document.removeEventListener('mouseup', stopQuickActionsDrag)
+  document.body.style.cursor = ''
 }
 
 // Auto-save watcher with debouncing
@@ -307,14 +383,56 @@ onMounted(async () => {
 
 .quick-actions {
   position: fixed;
-  top: 120px;
-  right: 20px;
   background: var(--card);
+  opacity: 0.95;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   z-index: 1000;
   min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  user-select: none;
+  transition: box-shadow 0.2s ease;
+}
+
+.quick-actions.actions-dragging {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+  cursor: grabbing;
+}
+
+.actions-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 12px;
+  cursor: grab;
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--muted);
+  transition: background-color 0.2s ease;
+}
+
+.actions-handle:hover {
+  background: var(--accent);
+}
+
+.actions-handle:active {
+  cursor: grabbing;
+}
+
+.handle-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.handle-line {
+  width: 12px;
+  height: 2px;
+  background: var(--muted-foreground);
+  border-radius: 1px;
+  opacity: 0.7;
 }
 
 .actions-header {
@@ -322,7 +440,6 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   padding: 12px 16px;
-  border-bottom: 1px solid var(--border);
 }
 
 .actions-header h4 {
@@ -446,6 +563,12 @@ onMounted(async () => {
     position: static;
     margin: 16px;
     order: -1;
+    min-width: auto;
+    width: calc(100% - 32px);
+  }
+
+  .actions-handle {
+    display: none; /* Hide drag handle on mobile */
   }
 
   .viewer-header {
