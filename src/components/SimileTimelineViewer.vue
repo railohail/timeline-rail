@@ -43,6 +43,10 @@
             <input v-model="newEvent.color" type="color" />
           </div>
           <div class="form-group">
+            <label>Link</label>
+            <input v-model="newEvent.link" type="url" placeholder="https://example.com" />
+          </div>
+          <div class="form-group">
             <label>Image</label>
             <input @change="handleImageUpload" type="file" accept="image/*" />
             <div v-if="newEvent.image" class="image-preview">
@@ -246,6 +250,14 @@
         <h4>{{ detail.event.title }}</h4>
         <div class="detail-header-actions">
           <Button
+            v-if="detail.event.link"
+            @click="openLink(detail.event.link)"
+            class="link-btn"
+            title="Open link"
+          >
+            🔗
+          </Button>
+          <Button
             @click="togglePin(detail)"
             class="pin-btn"
             :class="{ pinned: detail.isPinned }"
@@ -263,6 +275,7 @@
         <div v-if="detail.event.description" class="detail-description">
           {{ detail.event.description }}
         </div>
+
         <div v-if="detail.event.image" class="detail-image">
           <img :src="detail.event.image" :alt="detail.event.title" />
         </div>
@@ -330,6 +343,7 @@ interface TimelineEvent {
   description?: string
   color?: string
   image?: string
+  link?: string
   track?: number
 }
 
@@ -415,6 +429,7 @@ const newEvent = ref({
   isRange: false,
   color: '#4285f4',
   image: '',
+  link: '',
 })
 
 // Highlights management
@@ -1076,6 +1091,7 @@ function closeAddForm(): void {
     isRange: false,
     color: defaultEventColor.value,
     image: '',
+    link: '',
   }
   // If we were editing, the original event was deleted.
   // Its line ref would have been removed by the :ref function when the element was unmounted.
@@ -1094,6 +1110,7 @@ async function addEvent(): Promise<void> {
           : undefined,
       color: newEvent.value.color,
       image: newEvent.value.image,
+      link: newEvent.value.link,
     })
 
     // Update local events to match store
@@ -1356,6 +1373,7 @@ function editEvent(event: TimelineEvent): void {
     isRange: !!event.endDate,
     color: event.color || defaultEventColor.value,
     image: event.image || '',
+    link: event.link || '',
   }
 
   // Remove the event from the list (will be re-added when form is submitted)
@@ -1686,6 +1704,12 @@ function checkAndResolveCollision(
 
 function togglePin(detail: EventDetail): void {
   detail.isPinned = !detail.isPinned
+}
+
+function openLink(url: string): void {
+  if (url) {
+    window.open(url, '_blank', 'noopener,noreferrer')
+  }
 }
 
 function getEventConnectionPoint(event: TimelineEvent): { x: number; y: number } {
@@ -2582,6 +2606,8 @@ function stopControlsDrag(): void {
   line-height: 1.4;
 }
 
+
+
 .detail-image {
   margin-bottom: 12px;
 }
@@ -2654,6 +2680,27 @@ function stopControlsDrag(): void {
 .pin-btn.pinned {
   color: var(--primary);
   transform: rotate(45deg);
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  font-size: 16px;
+  color: var(--primary);
+  cursor: pointer;
+  padding: 4px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+.link-btn:hover {
+  background: var(--accent);
+  transform: scale(1.1);
 }
 
 .timeline-event:hover .event-dot {

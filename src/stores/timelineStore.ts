@@ -10,6 +10,7 @@ export interface TimelineEvent {
   description?: string
   color?: string
   image?: string
+  link?: string
   track?: number
 }
 

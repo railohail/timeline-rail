@@ -5,6 +5,7 @@ export interface TimelineEvent {
   endDate?: Date
   description?: string
   color?: string
+  link?: string
   category?: string
   priority?: 'low' | 'medium' | 'high' | 'critical'
   tags?: string[]
