@@ -332,7 +332,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { Button } from '@/components/ui/button'
 
 interface TimelineEvent {
@@ -385,8 +385,12 @@ const containerHeight = ref(800)
 const detailHeight = 350
 const overviewHeight = 80
 
-// Timeline state
-const centerTime = ref(props.centerDate.getTime())
+// Timeline state - safeguard against string centerDate
+const centerTime = ref(
+  typeof props.centerDate === 'string'
+    ? new Date(props.centerDate).getTime()
+    : props.centerDate.getTime()
+)
 const pixelsPerDay = ref(50)
 const isDragging = ref(false)
 const isOverviewDragging = ref(false)
@@ -1768,6 +1772,97 @@ const setDetailPanelRef = (el: HTMLElement | null, id: string) => {
   }
 }
 
+// Event handlers for cleanup
+const handleMouseMove = (e: MouseEvent) => {
+  if (isDragging.value || isOverviewDragging.value) {
+    if (isDragging.value) {
+      handleDrag(e)
+    } else if (isOverviewDragging.value) {
+      handleOverviewDrag(e)
+    }
+  }
+}
+
+const handleMouseUp = () => {
+  if (isDragging.value || isOverviewDragging.value) {
+    stopDrag()
+  }
+}
+
+const handleDocumentClick = (e: MouseEvent) => {
+  const target = e.target as Element
+
+  // Don't interfere with navigation elements (tab buttons, etc.)
+  if (target.closest('.demo-tabs') || target.closest('.tab-button') || target.closest('.timeline-manager')) {
+    return
+  }
+
+  // Close event details if clicking outside any detail panel
+  if (!target.closest('.event-detail-panel') && !target.closest('.timeline-event')) {
+    eventDetails.value = []
+  }
+
+  // Close add form if clicking outside the form
+  if (showAddForm.value && !target.closest('.add-event-form') && !target.closest('.btn-add')) {
+    closeAddForm()
+  }
+}
+
+// Watch for changes in timeline store events and sync local events
+watch(
+  () => timelineStore.events,
+  (newEvents) => {
+    console.log('Timeline store events changed, updating local events:', newEvents.length)
+    events.value = [...newEvents]
+    // Clear event tracks cache when events change
+    eventTracks.value.clear()
+    // Redraw canvases to reflect new events
+    redrawCanvases()
+  },
+  { deep: true }
+)
+
+// Watch for changes in timeline settings
+watch(
+  () => timelineStore.settings,
+  (newSettings) => {
+    console.log('Timeline settings changed, updating viewer settings')
+    if (newSettings) {
+      // Safeguard against string dates
+      const centerDate = typeof newSettings.centerDate === 'string'
+        ? new Date(newSettings.centerDate)
+        : newSettings.centerDate
+      centerTime.value = centerDate.getTime()
+      pixelsPerDay.value = newSettings.pixelsPerDay
+      redrawCanvases()
+    }
+  },
+  { deep: true }
+)
+
+// Watch for changes in current timeline (e.g., after import)
+watch(
+  () => timelineStore.currentTimeline,
+  (newTimeline) => {
+    console.log('Current timeline changed:', newTimeline?.name)
+    if (newTimeline) {
+      // Sync events and settings with new timeline
+      events.value = [...timelineStore.events]
+      // Safeguard against string dates
+      const centerDate = typeof timelineStore.settings.centerDate === 'string'
+        ? new Date(timelineStore.settings.centerDate)
+        : timelineStore.settings.centerDate
+      centerTime.value = centerDate.getTime()
+      pixelsPerDay.value = timelineStore.settings.pixelsPerDay
+      // Clear caches
+      eventTracks.value.clear()
+      eventDetails.value = []
+      // Redraw everything
+      redrawCanvases()
+    }
+  }
+)
+
 // Lifecycle
 onMounted(async () => {
   // Initialize timeline store if not already done
@@ -1797,39 +1892,19 @@ onMounted(async () => {
   // Set up theme change observer
   setupThemeObserver()
 
-  document.addEventListener('mousemove', (e) => {
-    if (isDragging.value || isOverviewDragging.value) {
-      if (isDragging.value) {
-        handleDrag(e)
-      } else if (isOverviewDragging.value) {
-        handleOverviewDrag(e)
-      }
-    }
-  })
-
-  document.addEventListener('mouseup', () => {
-    if (isDragging.value || isOverviewDragging.value) {
-      stopDrag()
-    }
-  })
-
-  document.addEventListener('click', (e) => {
-    const target = e.target as Element
-
-    // Close event details if clicking outside any detail panel
-    if (!target.closest('.event-detail-panel') && !target.closest('.timeline-event')) {
-      eventDetails.value = []
-    }
-
-    // Close add form if clicking outside the form
-    if (showAddForm.value && !target.closest('.add-event-form') && !target.closest('.btn-add')) {
-      closeAddForm()
-    }
-  })
+  document.addEventListener('mousemove', handleMouseMove)
+  document.addEventListener('mouseup', handleMouseUp)
+  document.addEventListener('click', handleDocumentClick)
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', resizeHandler)
+
+  // Remove document event listeners
+  document.removeEventListener('mousemove', handleMouseMove)
+  document.removeEventListener('mouseup', handleMouseUp)
+  document.removeEventListener('click', handleDocumentClick)
+
   stopPhysicsSimulation()
 
   // Disconnect theme observer

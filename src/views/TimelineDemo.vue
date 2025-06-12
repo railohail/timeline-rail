@@ -3,14 +3,14 @@
     <!-- Navigation Tabs -->
     <div class="demo-tabs">
       <button
-        @click="activeTab = 'viewer'"
+        @click="switchToViewer"
         :class="{ active: activeTab === 'viewer' }"
         class="tab-button"
       >
         Timeline Viewer
       </button>
       <button
-        @click="activeTab = 'manager'"
+        @click="switchToManager"
         :class="{ active: activeTab === 'manager' }"
         class="tab-button"
       >
@@ -182,6 +182,11 @@ async function exportTimeline(): Promise<void> {
 
 function switchToManager(): void {
   activeTab.value = 'manager'
+}
+
+function switchToViewer(): void {
+  console.log('Switching to viewer tab')
+  activeTab.value = 'viewer'
 }
 
 function getStorageType(): string {

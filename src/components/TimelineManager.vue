@@ -310,9 +310,13 @@ async function importTimeline(): Promise<void> {
   if (!importFile.value) return
 
   try {
+    console.log('Starting timeline import...')
     await timelineStore.importTimeline(importFile.value)
+    console.log('Timeline import completed, closing dialog...')
     closeImportDialog()
+    console.log('Refreshing timelines...')
     await refreshTimelines()
+    console.log('Import process finished')
   } catch (error) {
     console.error('Failed to import timeline:', error)
   }
@@ -323,8 +327,9 @@ function getTimelineName(id: string): string {
   return `Timeline ${id.slice(0, 8)}...`
 }
 
-function getTimelineStats(_id: string): string {
+function getTimelineStats(id: string): string {
   // This would show event/highlight counts from cached metadata
+  console.log('Getting stats for timeline:', id)
   return 'Loading...'
 }
 
@@ -345,12 +350,15 @@ function getStorageType(): string {
   return 'LocalStorage (Fallback)'
 }
 
-// Initialize
+// Load available timelines when component mounts
 onMounted(async () => {
   try {
-    await timelineStore.initialize()
+    console.log('TimelineManager mounted, refreshing timeline list...')
+    // Only refresh the timeline list, don't initialize the whole store
+    await timelineStore.loadAvailableTimelines()
+    console.log('Timeline list refreshed, current timeline remains:', timelineStore.currentTimeline?.name)
   } catch (error) {
-    console.error('Failed to initialize timeline store:', error)
+    console.error('Failed to load available timelines:', error)
   }
 })
 </script>

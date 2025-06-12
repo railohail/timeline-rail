@@ -1,10 +1,19 @@
 <script setup lang="ts">
-import {RouterView, useRoute } from 'vue-router'
+import {RouterView, useRoute, useRouter } from 'vue-router'
 import { computed, watch, onMounted, onUnmounted } from 'vue'
 import ColorDropdown from '@/components/ColorDropdown.vue'
+import { useAuthStore } from '@/stores/authStore'
 
 const route = useRoute()
+const router = useRouter()
+const authStore = useAuthStore()
 const isTimelineRoute = computed(() => route.path === '/timeline')
+const isAuthRoute = computed(() => route.path === '/auth')
+
+async function handleLogout() {
+  await authStore.logout()
+  router.push('/auth')
+}
 
 // Add/remove class on body for timeline route
 watch(
@@ -32,7 +41,13 @@ onUnmounted(() => {
 
 <template>
   <div :class="{ 'timeline-layout': isTimelineRoute }">
-    <ColorDropdown />
+    <!-- User info and logout button (only show when authenticated and not on auth page) -->
+    <div v-if="authStore.isAuthenticated && !isAuthRoute" class="user-info">
+      <span class="user-welcome">Welcome, {{ authStore.currentUser?.username }}!</span>
+      <button @click="handleLogout" class="logout-btn">Logout</button>
+    </div>
+
+    <ColorDropdown v-if="!isAuthRoute" />
     <RouterView />
   </div>
 </template>
@@ -98,5 +113,41 @@ body.timeline-active #app {
 
 .nav-links a:hover {
   background-color: #f8f8f8;
+}
+
+.user-info {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
+.user-welcome {
+  font-size: 0.875rem;
+  color: #374151;
+  font-weight: 500;
+}
+
+.logout-btn {
+  background: #ef4444;
+  color: white;
+  border: none;
+  padding: 0.375rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.logout-btn:hover {
+  background: #dc2626;
 }
 </style>

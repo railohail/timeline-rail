@@ -237,34 +237,47 @@ class StorageManager {
     await this.adapter.createDir(`${STORAGE_CONFIG.dataDir}/${STORAGE_CONFIG.exportsDir}`)
   }
 
-  // Timeline operations
-  async saveTimeline(timeline: TimelineData): Promise<void> {
-    const path = `${STORAGE_CONFIG.dataDir}/${STORAGE_CONFIG.timelinesDir}/${timeline.id}.json`
+  // Timeline operations (user-specific)
+  async saveTimeline(timeline: TimelineData, userId?: string): Promise<void> {
+    const userPrefix = userId ? `${userId}-` : ''
+    const path = `${STORAGE_CONFIG.dataDir}/${STORAGE_CONFIG.timelinesDir}/${userPrefix}${timeline.id}.json`
     const data = JSON.stringify(timeline, null, 2)
     await this.adapter.writeFile(path, data)
   }
 
-  async loadTimeline(id: string): Promise<TimelineData> {
-    const path = `${STORAGE_CONFIG.dataDir}/${STORAGE_CONFIG.timelinesDir}/${id}.json`
+  async loadTimeline(id: string, userId?: string): Promise<TimelineData> {
+    const userPrefix = userId ? `${userId}-` : ''
+    const path = `${STORAGE_CONFIG.dataDir}/${STORAGE_CONFIG.timelinesDir}/${userPrefix}${id}.json`
+    console.log('Storage: Loading timeline from path:', path)
     const data = await this.adapter.readFile(path)
+    console.log('Storage: Timeline data loaded successfully, length:', data.length)
     return JSON.parse(data) as TimelineData
   }
 
-  async deleteTimeline(id: string): Promise<void> {
-    const path = `${STORAGE_CONFIG.dataDir}/${STORAGE_CONFIG.timelinesDir}/${id}.json`
+  async deleteTimeline(id: string, userId?: string): Promise<void> {
+    const userPrefix = userId ? `${userId}-` : ''
+    const path = `${STORAGE_CONFIG.dataDir}/${STORAGE_CONFIG.timelinesDir}/${userPrefix}${id}.json`
+    console.log('Storage: Deleting timeline file at path:', path)
     await this.adapter.deleteFile(path)
+    console.log('Storage: Timeline file deleted successfully')
   }
 
-  async listTimelines(): Promise<string[]> {
+  async listTimelines(userId?: string): Promise<string[]> {
     const dir = `${STORAGE_CONFIG.dataDir}/${STORAGE_CONFIG.timelinesDir}`
+    const userPrefix = userId ? `${userId}-` : ''
+    console.log('Storage: Listing timelines in directory:', dir, 'for user:', userId)
     const files = await this.adapter.listFiles(dir)
-    return files
-      .filter(file => file.endsWith('.json'))
-      .map(file => file.replace('.json', ''))
+    console.log('Storage: Raw files found:', files)
+    const filtered = files
+      .filter(file => file.endsWith('.json') && file.startsWith(userPrefix))
+      .map(file => file.replace('.json', '').replace(userPrefix, ''))
+    console.log('Storage: Filtered timeline IDs:', filtered)
+    return filtered
   }
 
-  async timelineExists(id: string): Promise<boolean> {
-    const path = `${STORAGE_CONFIG.dataDir}/${STORAGE_CONFIG.timelinesDir}/${id}.json`
+  async timelineExists(id: string, userId?: string): Promise<boolean> {
+    const userPrefix = userId ? `${userId}-` : ''
+    const path = `${STORAGE_CONFIG.dataDir}/${STORAGE_CONFIG.timelinesDir}/${userPrefix}${id}.json`
     return await this.adapter.exists(path)
   }
 
