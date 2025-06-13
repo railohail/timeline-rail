@@ -240,16 +240,22 @@ export const useTimelineStore = defineStore('timeline', () => {
   }
 
   async function exportTimeline(id?: string): Promise<Blob> {
-    const timelineToExport = id ? await loadTimelineFromFile(id) : currentTimeline.value
+    const userId = getCurrentUserId()
+    const timelineToExport = id ? await loadTimelineFromFile(id, userId) : currentTimeline.value
     if (!timelineToExport) throw new Error('No timeline to export')
 
+    // Create export data without user-specific information for sharing
     const exportData = {
       ...timelineToExport,
       exportedAt: new Date(),
       version: '1.0'
     }
 
-    return new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
+    // Remove any user-specific fields that shouldn't be shared
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { userId: _, ...shareableData } = exportData as TimelineData & { userId?: string }
+
+    return new Blob([JSON.stringify(shareableData, null, 2)], { type: 'application/json' })
   }
 
   async function importTimeline(file: File): Promise<void> {
@@ -257,6 +263,11 @@ export const useTimelineStore = defineStore('timeline', () => {
     error.value = null
 
     try {
+      const userId = getCurrentUserId()
+      if (!userId) {
+        throw new Error('User must be logged in to import timelines')
+      }
+
       const text = await file.text()
       const data = JSON.parse(text) as TimelineData
 
@@ -282,7 +293,8 @@ export const useTimelineStore = defineStore('timeline', () => {
         }
       }
 
-      await saveTimelineToFile(timeline)
+      // Save timeline for the current user
+      await saveTimelineToFile(timeline, userId)
       currentTimeline.value = timeline
       await loadAvailableTimelines()
     } catch (err) {
