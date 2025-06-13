@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { storageManager } from '@/lib/storage'
 import { useAuthStore } from './authStore'
 
 export interface TimelineEvent {
@@ -230,38 +231,26 @@ export const useTimelineStore = defineStore('timeline', () => {
     console.log('Loading available timelines...')
     try {
       const userId = getCurrentUserId()
-      if (!userId) {
-        console.log('No user ID available, clearing timeline list')
-        availableTimelines.value = []
-        return
-      }
       const timelineIds = await getAvailableTimelineIds(userId)
       console.log('Available timeline IDs loaded:', timelineIds)
       availableTimelines.value = timelineIds
     } catch (err) {
       console.error('Error loading available timelines:', err)
-      // Don't set error here as it might be called during initialization
-      availableTimelines.value = []
+      error.value = `Failed to load available timelines: ${err}`
     }
   }
 
   async function exportTimeline(id?: string): Promise<Blob> {
-    const userId = getCurrentUserId()
-    const timelineToExport = id ? await loadTimelineFromFile(id, userId) : currentTimeline.value
+    const timelineToExport = id ? await loadTimelineFromFile(id) : currentTimeline.value
     if (!timelineToExport) throw new Error('No timeline to export')
 
-    // Create export data without user-specific information for sharing
     const exportData = {
       ...timelineToExport,
       exportedAt: new Date(),
       version: '1.0'
     }
 
-    // Remove any user-specific fields that shouldn't be shared
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { userId: _, ...shareableData } = exportData as TimelineData & { userId?: string }
-
-    return new Blob([JSON.stringify(shareableData, null, 2)], { type: 'application/json' })
+    return new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
   }
 
   async function importTimeline(file: File): Promise<void> {
@@ -269,39 +258,32 @@ export const useTimelineStore = defineStore('timeline', () => {
     error.value = null
 
     try {
-      const userId = getCurrentUserId()
-      if (!userId) {
-        throw new Error('User must be logged in to import timelines')
-      }
-
       const text = await file.text()
       const data = JSON.parse(text) as TimelineData
 
-      // Validate and sanitize data - handle both old and new formats
+      // Validate and sanitize data
       const timeline: TimelineData = {
-        id: generateId(), // Always generate new ID to avoid conflicts
-        name: data.name || 'Imported Timeline',
+        ...data,
+        id: generateId(), // Generate new ID to avoid conflicts
         updatedAt: new Date(),
-        createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
-        events: (data.events || []).map(e => ({
+        events: data.events.map(e => ({
           ...e,
           startDate: new Date(e.startDate),
           endDate: e.endDate ? new Date(e.endDate) : undefined
         })),
-        highlights: (data.highlights || []).map(h => ({
+        highlights: data.highlights.map(h => ({
           ...h,
           startDate: new Date(h.startDate),
           endDate: new Date(h.endDate)
         })),
         settings: {
+          ...data.settings,
           centerDate: data.settings?.centerDate ? new Date(data.settings.centerDate) : new Date(),
-          pixelsPerDay: data.settings?.pixelsPerDay || 50,
-          theme: data.settings?.theme
+          pixelsPerDay: data.settings?.pixelsPerDay || 50
         }
       }
 
-      // Save timeline for the current user
-      await saveTimelineToFile(timeline, userId)
+      await saveTimelineToFile(timeline)
       currentTimeline.value = timeline
       await loadAvailableTimelines()
     } catch (err) {
@@ -328,31 +310,20 @@ export const useTimelineStore = defineStore('timeline', () => {
     }
 
     console.log('Initializing timeline store for user:', userId)
-    isLoading.value = true
-    error.value = null
+    // Initialize storage manager first
+    await storageManager.init()
 
-    try {
-      await loadAvailableTimelines()
+    await loadAvailableTimelines()
 
-      // Load default timeline or create one
-      if (availableTimelines.value.length === 0) {
-        console.log('No timelines found, creating default timeline...')
-        await createTimeline('My Timeline')
-      } else {
-        console.log('Loading first available timeline:', availableTimelines.value[0])
-        await loadTimeline(availableTimelines.value[0])
-      }
-
-      isInitialized.value = true
-      console.log('Timeline store initialization complete')
-    } catch (err) {
-      console.error('Timeline store initialization failed:', err)
-      error.value = `Failed to initialize timeline store: ${err}`
-      // Even if initialization fails, mark as initialized to prevent infinite loops
-      isInitialized.value = true
-    } finally {
-      isLoading.value = false
+    // Load default timeline or create one
+    if (availableTimelines.value.length === 0) {
+      await createTimeline('My Timeline')
+    } else {
+      await loadTimeline(availableTimelines.value[0])
     }
+
+    isInitialized.value = true
+    console.log('Timeline store initialization complete')
   }
 
   // Reset store when user logs out
@@ -377,17 +348,8 @@ export const useTimelineStore = defineStore('timeline', () => {
 
     try {
       const userId = getCurrentUserId()
-      if (!userId) throw new Error('User not authenticated')
-
       console.log('Deleting timeline:', id, 'Current timeline:', currentTimeline.value?.id)
-
-      const response = await fetch(`/api/timelines/${id}?userId=${userId}`, {
-        method: 'DELETE'
-      })
-
-      if (!response.ok) {
-        throw new Error('Failed to delete timeline')
-      }
+      await storageManager.deleteTimeline(id, userId)
 
       // If we deleted the current timeline, load another one or create a new one
       if (currentTimeline.value?.id === id) {
@@ -398,7 +360,7 @@ export const useTimelineStore = defineStore('timeline', () => {
           await loadTimeline(availableTimelines.value[0])
         } else {
           console.log('No timelines left, creating default...')
-          await createTimeline('My Timeline')
+          await createTimeline('Default Timeline')
         }
       } else {
         console.log('Deleted non-current timeline, refreshing list...')
@@ -464,47 +426,21 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
-// Storage functions using the API
+// Storage functions using the storage manager
 async function saveTimelineToFile(timeline: TimelineData, userId?: string): Promise<void> {
-  if (!userId) {
-    console.log('No user ID provided - timeline cannot be saved to server')
-    return
-  }
-
-  const response = await fetch('/api/timelines', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ timeline, userId }),
-  })
-
-  if (!response.ok) {
-    const errorData = await response.json()
-    throw new Error(errorData.error || 'Failed to save timeline')
-  }
+  await storageManager.saveTimeline(timeline, userId)
 }
 
 async function loadTimelineFromFile(id: string, userId?: string): Promise<TimelineData> {
-  if (!userId) {
-    throw new Error('User ID required to load timeline from server')
-  }
-
-  const response = await fetch(`/api/timelines/${id}?userId=${userId}`)
-
-  if (!response.ok) {
-    throw new Error('Timeline not found')
-  }
-
-  const { timeline } = await response.json()
+  const timeline = await storageManager.loadTimeline(id, userId)
   return {
     ...timeline,
-    events: timeline.events.map((e: TimelineEvent) => ({
+    events: timeline.events.map(e => ({
       ...e,
       startDate: new Date(e.startDate),
       endDate: e.endDate ? new Date(e.endDate) : undefined
     })),
-    highlights: timeline.highlights.map((h: TimelineHighlight) => ({
+    highlights: timeline.highlights.map(h => ({
       ...h,
       startDate: new Date(h.startDate),
       endDate: new Date(h.endDate)
@@ -517,27 +453,16 @@ async function loadTimelineFromFile(id: string, userId?: string): Promise<Timeli
 }
 
 async function getAvailableTimelineIds(userId?: string): Promise<string[]> {
-  if (!userId) return []
-
-  console.log('Getting available timeline IDs from API...')
-  const response = await fetch(`/api/timelines?userId=${userId}`)
-
-  if (!response.ok) {
-    console.error('Failed to fetch timelines')
-    return []
-  }
-
-  const { timelines } = await response.json()
-  console.log('API returned timeline IDs:', timelines)
-  return timelines
+  console.log('Getting available timeline IDs from storage manager...')
+  const ids = await storageManager.listTimelines(userId)
+  console.log('Storage manager returned timeline IDs:', ids)
+  return ids
 }
 
 async function saveImageFile(filename: string, base64Data: string): Promise<void> {
-  // TODO: Implement image storage via API
-  console.warn('Image storage not yet implemented for API backend', { filename, base64Data: base64Data.substring(0, 50) + '...' })
+  await storageManager.saveImage(filename, base64Data)
 }
 
 async function deleteImage(filename: string): Promise<void> {
-  // TODO: Implement image deletion via API
-  console.warn('Image deletion not yet implemented for API backend', { filename })
+  await storageManager.deleteImage(filename)
 }
