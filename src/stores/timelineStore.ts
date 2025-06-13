@@ -1,6 +1,5 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { storageManager } from '@/lib/storage'
 import { useAuthStore } from './authStore'
 
 export interface TimelineEvent {
@@ -310,8 +309,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     }
 
     console.log('Initializing timeline store for user:', userId)
-    // Initialize storage manager first
-    await storageManager.init()
+    // No need to initialize storage manager for API-based storage
 
     await loadAvailableTimelines()
 
@@ -348,8 +346,17 @@ export const useTimelineStore = defineStore('timeline', () => {
 
     try {
       const userId = getCurrentUserId()
+      if (!userId) throw new Error('User not authenticated')
+
       console.log('Deleting timeline:', id, 'Current timeline:', currentTimeline.value?.id)
-      await storageManager.deleteTimeline(id, userId)
+
+      const response = await fetch(`/api/timelines/${id}?userId=${userId}`, {
+        method: 'DELETE'
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to delete timeline')
+      }
 
       // If we deleted the current timeline, load another one or create a new one
       if (currentTimeline.value?.id === id) {
@@ -360,7 +367,7 @@ export const useTimelineStore = defineStore('timeline', () => {
           await loadTimeline(availableTimelines.value[0])
         } else {
           console.log('No timelines left, creating default...')
-          await createTimeline('Default Timeline')
+          await createTimeline('My Timeline')
         }
       } else {
         console.log('Deleted non-current timeline, refreshing list...')
@@ -426,21 +433,42 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
-// Storage functions using the storage manager
+// Storage functions using the API
 async function saveTimelineToFile(timeline: TimelineData, userId?: string): Promise<void> {
-  await storageManager.saveTimeline(timeline, userId)
+  if (!userId) throw new Error('User ID required')
+
+  const response = await fetch('/api/timelines', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ timeline, userId }),
+  })
+
+  if (!response.ok) {
+    const errorData = await response.json()
+    throw new Error(errorData.error || 'Failed to save timeline')
+  }
 }
 
 async function loadTimelineFromFile(id: string, userId?: string): Promise<TimelineData> {
-  const timeline = await storageManager.loadTimeline(id, userId)
+  if (!userId) throw new Error('User ID required')
+
+  const response = await fetch(`/api/timelines/${id}?userId=${userId}`)
+
+  if (!response.ok) {
+    throw new Error('Timeline not found')
+  }
+
+  const { timeline } = await response.json()
   return {
     ...timeline,
-    events: timeline.events.map(e => ({
+    events: timeline.events.map((e: TimelineEvent) => ({
       ...e,
       startDate: new Date(e.startDate),
       endDate: e.endDate ? new Date(e.endDate) : undefined
     })),
-    highlights: timeline.highlights.map(h => ({
+    highlights: timeline.highlights.map((h: TimelineHighlight) => ({
       ...h,
       startDate: new Date(h.startDate),
       endDate: new Date(h.endDate)
@@ -453,16 +481,27 @@ async function loadTimelineFromFile(id: string, userId?: string): Promise<Timeli
 }
 
 async function getAvailableTimelineIds(userId?: string): Promise<string[]> {
-  console.log('Getting available timeline IDs from storage manager...')
-  const ids = await storageManager.listTimelines(userId)
-  console.log('Storage manager returned timeline IDs:', ids)
-  return ids
+  if (!userId) return []
+
+  console.log('Getting available timeline IDs from API...')
+  const response = await fetch(`/api/timelines?userId=${userId}`)
+
+  if (!response.ok) {
+    console.error('Failed to fetch timelines')
+    return []
+  }
+
+  const { timelines } = await response.json()
+  console.log('API returned timeline IDs:', timelines)
+  return timelines
 }
 
 async function saveImageFile(filename: string, base64Data: string): Promise<void> {
-  await storageManager.saveImage(filename, base64Data)
+  // TODO: Implement image storage via API
+  console.warn('Image storage not yet implemented for API backend', { filename, base64Data: base64Data.substring(0, 50) + '...' })
 }
 
 async function deleteImage(filename: string): Promise<void> {
-  await storageManager.deleteImage(filename)
+  // TODO: Implement image deletion via API
+  console.warn('Image deletion not yet implemented for API backend', { filename })
 }

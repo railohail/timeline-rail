@@ -1,6 +1,5 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import bcrypt from 'bcryptjs'
 import Cookies from 'js-cookie'
 
 export interface User {
@@ -29,44 +28,37 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = computed(() => !!currentUser.value)
 
   // Actions
-  async function register(data: RegisterData): Promise<void> {
+    async function register(data: RegisterData): Promise<void> {
     isLoading.value = true
     error.value = null
 
     try {
-      // Check if user already exists
-      const existingUsers = getStoredUsers()
-      const userExists = existingUsers.some(
-        user => user.username === data.username || user.email === data.email
-      )
+      // Call backend API
+      const response = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(data),
+      })
 
-      if (userExists) {
-        throw new Error('Username or email already exists')
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Registration failed')
       }
 
-      // Hash password
-      const hashedPassword = await bcrypt.hash(data.password, 10)
+      const { user } = await response.json()
 
-      // Create new user
-      const newUser: User & { password: string } = {
-        id: generateUserId(),
-        username: data.username,
-        email: data.email,
-        password: hashedPassword,
-        createdAt: new Date()
+      // Set current user
+      currentUser.value = {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        createdAt: new Date(user.created_at)
       }
-
-      // Save user to localStorage
-      const users = [...existingUsers, newUser]
-      localStorage.setItem('timeline-users', JSON.stringify(users))
-
-            // Set current user (without password)
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { password: _, ...userWithoutPassword } = newUser
-      currentUser.value = userWithoutPassword
 
       // Generate and store simple auth token
-      const token = generateAuthToken(newUser.id)
+      const token = generateAuthToken(user.id)
       Cookies.set(TOKEN_COOKIE_NAME, token, { expires: 7 })
 
       // Initialize timeline store for the new user
@@ -87,23 +79,29 @@ export const useAuthStore = defineStore('auth', () => {
     error.value = null
 
     try {
-      const users = getStoredUsers()
-      const user = users.find(u => u.username === credentials.username)
+      // Call backend API
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(credentials),
+      })
 
-      if (!user) {
-        throw new Error('Invalid username or password')
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Login failed')
       }
 
-      // Verify password
-      const isValidPassword = await bcrypt.compare(credentials.password, user.password)
-      if (!isValidPassword) {
-        throw new Error('Invalid username or password')
-      }
+      const { user } = await response.json()
 
-      // Set current user (without password)
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { password: _pwd, ...userWithoutPassword } = user
-      currentUser.value = userWithoutPassword
+      // Set current user
+      currentUser.value = {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        createdAt: new Date(user.created_at)
+      }
 
       // Generate and store simple auth token
       const token = generateAuthToken(user.id)
@@ -147,22 +145,31 @@ export const useAuthStore = defineStore('auth', () => {
         throw new Error('Invalid token')
       }
 
-      const users = getStoredUsers()
-      const user = users.find(u => u.id === userId)
+      if (userId) {
+        // Get user from backend
+        const userResponse = await fetch(`/api/auth/user/${userId}`)
+        if (userResponse.ok) {
+          const { user } = await userResponse.json()
+          currentUser.value = {
+            id: user.id,
+            username: user.username,
+            email: user.email,
+            createdAt: new Date(user.created_at)
+          }
 
-      if (user) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { password: _pwd2, ...userWithoutPassword } = user
-        currentUser.value = userWithoutPassword
-
-        // Initialize timeline store for authenticated user
-        const { useTimelineStore } = await import('./timelineStore')
-        const timelineStore = useTimelineStore()
-        if (!timelineStore.isInitialized) {
-          await timelineStore.initialize()
+          // Initialize timeline store for authenticated user
+          const { useTimelineStore } = await import('./timelineStore')
+          const timelineStore = useTimelineStore()
+          if (!timelineStore.isInitialized) {
+            await timelineStore.initialize()
+          }
+        } else {
+          // User not found, remove invalid token
+          Cookies.remove(TOKEN_COOKIE_NAME)
+          currentUser.value = null
         }
       } else {
-        // User not found, remove invalid token
+        // Invalid token, remove it
         Cookies.remove(TOKEN_COOKIE_NAME)
         currentUser.value = null
       }
@@ -194,10 +201,6 @@ export const useAuthStore = defineStore('auth', () => {
 })
 
 // Utility functions
-function generateUserId(): string {
-  return `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-}
-
 function generateAuthToken(userId: string): string {
   const timestamp = Date.now()
   const randomPart = Math.random().toString(36).substr(2, 9)
@@ -220,19 +223,5 @@ function verifyAuthToken(token: string): string | null {
     return userId
   } catch {
     return null
-  }
-}
-
-function getStoredUsers(): (User & { password: string })[] {
-  const stored = localStorage.getItem('timeline-users')
-  if (!stored) return []
-
-  try {
-    return JSON.parse(stored).map((user: User & { password: string; createdAt: string }) => ({
-      ...user,
-      createdAt: new Date(user.createdAt)
-    }))
-  } catch {
-    return []
   }
 }
