@@ -147,16 +147,34 @@ app.post('/api/timelines', async (req, res) => {
   try {
     const { timeline, userId } = req.body;
 
-    await pool.query(
-      `INSERT INTO timelines (id, user_id, name, data, updated_at)
-       VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
-       ON CONFLICT (id)
-       DO UPDATE SET
-         name = EXCLUDED.name,
-         data = EXCLUDED.data,
-         updated_at = CURRENT_TIMESTAMP`,
-      [timeline.id, userId, timeline.name, JSON.stringify(timeline)]
+    if (!timeline || !userId) {
+      return res.status(400).json({ error: 'Timeline and userId are required' });
+    }
+
+    // Check if timeline exists for this user
+    const existing = await pool.query(
+      'SELECT id FROM timelines WHERE id = $1 AND user_id = $2',
+      [timeline.id, userId]
     );
+
+    if (existing.rows.length > 0) {
+      // Update existing timeline
+      await pool.query(
+        `UPDATE timelines SET
+         name = $3,
+         data = $4,
+         updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND user_id = $2`,
+        [timeline.id, userId, timeline.name, JSON.stringify(timeline)]
+      );
+    } else {
+      // Insert new timeline
+      await pool.query(
+        `INSERT INTO timelines (id, user_id, name, data, updated_at)
+         VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)`,
+        [timeline.id, userId, timeline.name, JSON.stringify(timeline)]
+      );
+    }
 
     res.json({ success: true });
   } catch (error) {

@@ -269,42 +269,41 @@ export const useTimelineStore = defineStore('timeline', () => {
     error.value = null
 
     try {
+      const userId = getCurrentUserId()
+      if (!userId) {
+        throw new Error('User must be logged in to import timelines')
+      }
+
       const text = await file.text()
       const data = JSON.parse(text) as TimelineData
 
-      // Validate and sanitize data
+      // Validate and sanitize data - handle both old and new formats
       const timeline: TimelineData = {
-        ...data,
-        id: generateId(), // Generate new ID to avoid conflicts
+        id: generateId(), // Always generate new ID to avoid conflicts
+        name: data.name || 'Imported Timeline',
         updatedAt: new Date(),
-        events: data.events?.map(e => ({
+        createdAt: data.createdAt ? new Date(data.createdAt) : new Date(),
+        events: (data.events || []).map(e => ({
           ...e,
           startDate: new Date(e.startDate),
           endDate: e.endDate ? new Date(e.endDate) : undefined
-        })) || [],
-        highlights: data.highlights?.map(h => ({
+        })),
+        highlights: (data.highlights || []).map(h => ({
           ...h,
           startDate: new Date(h.startDate),
           endDate: new Date(h.endDate)
-        })) || [],
+        })),
         settings: {
-          ...data.settings,
           centerDate: data.settings?.centerDate ? new Date(data.settings.centerDate) : new Date(),
-          pixelsPerDay: data.settings?.pixelsPerDay || 50
+          pixelsPerDay: data.settings?.pixelsPerDay || 50,
+          theme: data.settings?.theme
         }
       }
 
-      // Set as current timeline immediately for viewing
+      // Save timeline for the current user
+      await saveTimelineToFile(timeline, userId)
       currentTimeline.value = timeline
-
-      // If user is logged in, save the timeline
-      const userId = getCurrentUserId()
-      if (userId) {
-        await saveTimelineToFile(timeline, userId)
-        await loadAvailableTimelines()
-      } else {
-        console.log('User not logged in - timeline imported for viewing only (not saved)')
-      }
+      await loadAvailableTimelines()
     } catch (err) {
       error.value = `Failed to import timeline: ${err}`
       throw err
