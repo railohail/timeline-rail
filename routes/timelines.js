@@ -22,7 +22,10 @@ router.get('/', async (req, res) => {
     })));
   } catch (error) {
     console.error('Get timelines error:', error);
-    res.status(500).json({ error: 'Failed to get timelines' });
+    res.status(500).json({
+      error: 'Failed to get timelines',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -221,7 +224,8 @@ router.post('/import', async (req, res) => {
             track: eventData.track || 0
           });
         } catch (error) {
-          console.warn(`Failed to import event ${eventData.title}:`, error);
+          console.warn(`Failed to import event "${eventData.title}":`, error.message);
+          // Continue with other events even if one fails
         }
       }
     }

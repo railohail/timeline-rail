@@ -13,7 +13,8 @@
     "format": "prettier --write src/",
     "heroku-postbuild": "npm run build",
     "start": "node server.js",
-    "db:migrate": "node scripts/migrate.js"
+    "db:migrate": "node scripts/migrate.js",
+    "db:migrate-production": "node scripts/migrate-production.js"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.8",
