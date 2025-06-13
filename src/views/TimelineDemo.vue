@@ -20,15 +20,6 @@
 
     <!-- Timeline Viewer Tab -->
     <div v-if="activeTab === 'viewer'" class="tab-content">
-      <div class="viewer-header">
-        <h2>Timeline Viewer</h2>
-        <div class="viewer-info" v-if="timelineStore.currentTimeline">
-          <span>{{ timelineStore.currentTimeline.name }}</span>
-          <span class="event-count">{{ timelineStore.events.length }} events</span>
-          <span class="highlight-count">{{ timelineStore.highlights.length }} highlights</span>
-        </div>
-      </div>
-
       <SimileTimelineViewer
         :events="timelineStore.events"
         :center-date="timelineStore.settings.centerDate"
@@ -352,39 +343,9 @@ onMounted(async () => {
   position: relative;
 }
 
-.viewer-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16px 20px;
-  background: var(--card);
-  border-bottom: 1px solid var(--border);
-}
 
-.viewer-header h2 {
-  margin: 0;
-  color: var(--card-foreground);
-}
 
-.viewer-info {
-  display: flex;
-  gap: 16px;
-  align-items: center;
-  font-size: 14px;
-}
 
-.viewer-info span {
-  color: var(--muted-foreground);
-}
-
-.event-count,
-.highlight-count {
-  background: var(--muted);
-  padding: 4px 8px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  font-weight: 500;
-}
 
 .quick-actions {
   position: fixed;
@@ -576,15 +537,7 @@ onMounted(async () => {
     display: none; /* Hide drag handle on mobile */
   }
 
-  .viewer-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
 
-  .viewer-info {
-    flex-wrap: wrap;
-  }
 
   .status-bar {
     flex-direction: column;

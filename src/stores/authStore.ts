@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import bcrypt from 'bcryptjs'
 import Cookies from 'js-cookie'
+import { apiStorageManager } from '@/lib/apiStorage'
 
 export interface User {
   id: string
@@ -20,6 +20,7 @@ export interface RegisterData extends UserCredentials {
 }
 
 const TOKEN_COOKIE_NAME = 'timeline-auth-token'
+const API_BASE_URL = '/api'
 
 export const useAuthStore = defineStore('auth', () => {
   // State
@@ -28,46 +29,52 @@ export const useAuthStore = defineStore('auth', () => {
   const error = ref<string | null>(null)
   const isAuthenticated = computed(() => !!currentUser.value)
 
+  // Helper function to make API requests
+  async function makeAuthRequest(endpoint: string, options: RequestInit = {}): Promise<Response> {
+    const url = `${API_BASE_URL}${endpoint}`
+
+    const response = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+      },
+      ...options
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+      throw new Error(errorData.error || `HTTP ${response.status}`)
+    }
+
+    return response
+  }
+
   // Actions
   async function register(data: RegisterData): Promise<void> {
     isLoading.value = true
     error.value = null
 
     try {
-      // Check if user already exists
-      const existingUsers = getStoredUsers()
-      const userExists = existingUsers.some(
-        user => user.username === data.username || user.email === data.email
-      )
+      const response = await makeAuthRequest('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      })
 
-      if (userExists) {
-        throw new Error('Username or email already exists')
+      const result = await response.json()
+
+      // Set current user
+      currentUser.value = {
+        id: result.user.id,
+        username: result.user.username,
+        email: result.user.email,
+        createdAt: new Date(result.user.createdAt)
       }
 
-      // Hash password
-      const hashedPassword = await bcrypt.hash(data.password, 10)
+      // Store token
+      Cookies.set(TOKEN_COOKIE_NAME, result.token, { expires: 7 })
 
-      // Create new user
-      const newUser: User & { password: string } = {
-        id: generateUserId(),
-        username: data.username,
-        email: data.email,
-        password: hashedPassword,
-        createdAt: new Date()
-      }
-
-      // Save user to localStorage
-      const users = [...existingUsers, newUser]
-      localStorage.setItem('timeline-users', JSON.stringify(users))
-
-            // Set current user (without password)
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { password: _, ...userWithoutPassword } = newUser
-      currentUser.value = userWithoutPassword
-
-      // Generate and store simple auth token
-      const token = generateAuthToken(newUser.id)
-      Cookies.set(TOKEN_COOKIE_NAME, token, { expires: 7 })
+      // Set token for API storage
+      apiStorageManager.setAuthToken(result.token)
 
       // Initialize timeline store for the new user
       const { useTimelineStore } = await import('./timelineStore')
@@ -87,27 +94,26 @@ export const useAuthStore = defineStore('auth', () => {
     error.value = null
 
     try {
-      const users = getStoredUsers()
-      const user = users.find(u => u.username === credentials.username)
+      const response = await makeAuthRequest('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify(credentials)
+      })
 
-      if (!user) {
-        throw new Error('Invalid username or password')
+      const result = await response.json()
+
+      // Set current user
+      currentUser.value = {
+        id: result.user.id,
+        username: result.user.username,
+        email: result.user.email,
+        createdAt: new Date(result.user.createdAt)
       }
 
-      // Verify password
-      const isValidPassword = await bcrypt.compare(credentials.password, user.password)
-      if (!isValidPassword) {
-        throw new Error('Invalid username or password')
-      }
+      // Store token
+      Cookies.set(TOKEN_COOKIE_NAME, result.token, { expires: 7 })
 
-      // Set current user (without password)
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { password: _pwd, ...userWithoutPassword } = user
-      currentUser.value = userWithoutPassword
-
-      // Generate and store simple auth token
-      const token = generateAuthToken(user.id)
-      Cookies.set(TOKEN_COOKIE_NAME, token, { expires: 7 })
+      // Set token for API storage
+      apiStorageManager.setAuthToken(result.token)
 
       // Initialize timeline store for the user
       const { useTimelineStore } = await import('./timelineStore')
@@ -127,6 +133,9 @@ export const useAuthStore = defineStore('auth', () => {
     Cookies.remove(TOKEN_COOKIE_NAME)
     error.value = null
 
+    // Clear token from API storage
+    apiStorageManager.setAuthToken(null)
+
     // Reset timeline store
     const { useTimelineStore } = await import('./timelineStore')
     const timelineStore = useTimelineStore()
@@ -138,38 +147,41 @@ export const useAuthStore = defineStore('auth', () => {
 
     if (!token) {
       currentUser.value = null
+      apiStorageManager.setAuthToken(null)
       return
     }
 
     try {
-      const userId = verifyAuthToken(token)
-      if (!userId) {
-        throw new Error('Invalid token')
+      // Set token for API requests
+      apiStorageManager.setAuthToken(token)
+
+      // Verify token with server
+      const response = await makeAuthRequest('/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+
+      const userData = await response.json()
+
+      currentUser.value = {
+        id: userData.id,
+        username: userData.username,
+        email: userData.email,
+        createdAt: new Date(userData.createdAt)
       }
 
-      const users = getStoredUsers()
-      const user = users.find(u => u.id === userId)
-
-      if (user) {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
-        const { password: _pwd2, ...userWithoutPassword } = user
-        currentUser.value = userWithoutPassword
-
-        // Initialize timeline store for authenticated user
-        const { useTimelineStore } = await import('./timelineStore')
-        const timelineStore = useTimelineStore()
-        if (!timelineStore.isInitialized) {
-          await timelineStore.initialize()
-        }
-      } else {
-        // User not found, remove invalid token
-        Cookies.remove(TOKEN_COOKIE_NAME)
-        currentUser.value = null
+      // Initialize timeline store for authenticated user
+      const { useTimelineStore } = await import('./timelineStore')
+      const timelineStore = useTimelineStore()
+      if (!timelineStore.isInitialized) {
+        await timelineStore.initialize()
       }
     } catch {
       // Invalid token, remove it
       Cookies.remove(TOKEN_COOKIE_NAME)
       currentUser.value = null
+      apiStorageManager.setAuthToken(null)
     }
   }
 
@@ -193,46 +205,4 @@ export const useAuthStore = defineStore('auth', () => {
   }
 })
 
-// Utility functions
-function generateUserId(): string {
-  return `user-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-}
 
-function generateAuthToken(userId: string): string {
-  const timestamp = Date.now()
-  const randomPart = Math.random().toString(36).substr(2, 9)
-  const tokenData = `${userId}:${timestamp}:${randomPart}`
-  return btoa(tokenData) // Base64 encode
-}
-
-function verifyAuthToken(token: string): string | null {
-  try {
-    const decoded = atob(token) // Base64 decode
-    const parts = decoded.split(':')
-    if (parts.length !== 3) return null
-
-    const [userId, timestamp] = parts
-    const tokenAge = Date.now() - parseInt(timestamp)
-    const maxAge = 7 * 24 * 60 * 60 * 1000 // 7 days in milliseconds
-
-    if (tokenAge > maxAge) return null // Token expired
-
-    return userId
-  } catch {
-    return null
-  }
-}
-
-function getStoredUsers(): (User & { password: string })[] {
-  const stored = localStorage.getItem('timeline-users')
-  if (!stored) return []
-
-  try {
-    return JSON.parse(stored).map((user: User & { password: string; createdAt: string }) => ({
-      ...user,
-      createdAt: new Date(user.createdAt)
-    }))
-  } catch {
-    return []
-  }
-}

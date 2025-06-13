@@ -121,8 +121,34 @@
 
       <!-- Events layer -->
       <div class="events-layer">
+                        <!-- Event Blobs (when zoomed out) -->
         <div
-          v-for="event in visibleEvents"
+          v-for="blob in eventBlobs"
+          :key="blob.id"
+          class="timeline-blob"
+          :style="getBlobPosition(blob)"
+        >
+          <div class="blob-container">
+            <div
+              v-for="(event, index) in blob.events.slice(0, 2)"
+              :key="event.id"
+              class="blob-event-dot"
+              :class="{ 'blob-event-overflow': index >= 1 && blob.events.length > 2 }"
+              :style="{
+                backgroundColor: event.color || defaultEventColor
+              }"
+            >
+              <span v-if="index === 1 && blob.events.length > 2" class="blob-overflow-count">
+                +{{ blob.events.length - 1 }}
+              </span>
+            </div>
+          </div>
+          <div class="blob-label">{{ getBlobDateRange(blob) }}</div>
+        </div>
+
+        <!-- Individual Events (when zoomed in or not part of blobs) -->
+        <div
+          v-for="event in visibleEventsOrBlobs"
           :key="event.id"
           :data-event-id="event.id"
           class="timeline-event"
@@ -190,8 +216,33 @@
 
       <!-- Events layer -->
       <div class="events-layer">
+                <!-- Overview Event Blobs -->
         <div
-          v-for="event in overviewVisibleEvents"
+          v-for="blob in eventBlobs"
+          :key="`ov-blob-${blob.id}`"
+          class="timeline-blob overview-blob"
+          :style="getOverviewBlobPosition(blob)"
+        >
+          <div class="blob-container-small">
+            <div
+              v-for="(event, index) in blob.events.slice(0, 2)"
+              :key="event.id"
+              class="blob-event-dot-small"
+              :class="{ 'blob-event-overflow-small': index >= 1 && blob.events.length > 2 }"
+              :style="{
+                backgroundColor: event.color || defaultEventColor
+              }"
+            >
+              <span v-if="index === 1 && blob.events.length > 2" class="blob-overflow-count-small">
+                +{{ blob.events.length - 1 }}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Individual Overview Events -->
+        <div
+          v-for="event in overviewVisibleEvents.filter(e => !eventBlobs.some(blob => blob.events.some(be => be.id === e.id)))"
           :key="`ov-${event.id}`"
           class="timeline-event overview-event"
           :style="getOverviewEventPosition(event)"
@@ -347,7 +398,16 @@ interface TimelineEvent {
   track?: number
 }
 
-
+interface EventBlob {
+  id: string
+  events: TimelineEvent[]
+  startDate: Date
+  endDate: Date
+  x: number
+  y: number
+  track: number
+  count: number
+}
 
 interface EventDetail {
   event: TimelineEvent
@@ -409,6 +469,9 @@ const controlsRef = ref<HTMLElement>()
 const events = ref<TimelineEvent[]>([...props.events])
 const draggedEventId = ref<string | null>(null)
 const eventDragStart = ref({ x: 0, y: 0, originalDate: new Date() })
+
+// Blob management for event grouping when zoomed out
+const BLOB_THRESHOLD_PIXELS = 30 // Minimum pixel distance before events are grouped into blobs
 
 // Import the timeline store to save highlights
 import { useTimelineStore, type TimelineHighlight } from '@/stores/timelineStore'
@@ -581,6 +644,149 @@ const overviewVisibleHighlights = computed(() => {
   return timelineStore.highlights.filter((highlight: TimelineHighlight) => {
     return highlight.endDate.getTime() >= startTime && highlight.startDate.getTime() <= endTime
   })
+})
+
+// Blob grouping computed properties
+const shouldUseBlobs = computed(() => {
+  // Use blobs when zoomed out enough that events would overlap significantly
+  return pixelsPerDay.value < 5 // When less than 5 pixels per day, group into blobs
+})
+
+const eventBlobs = computed(() => {
+  if (!shouldUseBlobs.value) {
+    console.log('Not using blobs, pixelsPerDay:', pixelsPerDay.value)
+    return []
+  }
+
+  console.log('Creating blobs, pixelsPerDay:', pixelsPerDay.value, 'visibleEvents:', visibleEvents.value.length)
+
+  const blobs: EventBlob[] = []
+  const processedEvents = new Set<string>()
+
+  for (const event of visibleEvents.value) {
+    if (processedEvents.has(event.id)) continue
+
+    const eventX = timeToPixel(event.startDate.getTime())
+    const nearbyEvents = [event]
+    processedEvents.add(event.id)
+
+    // Find nearby events that should be grouped together
+    for (const otherEvent of visibleEvents.value) {
+      if (processedEvents.has(otherEvent.id)) continue
+
+      const otherX = timeToPixel(otherEvent.startDate.getTime())
+      if (Math.abs(eventX - otherX) <= BLOB_THRESHOLD_PIXELS) {
+        nearbyEvents.push(otherEvent)
+        processedEvents.add(otherEvent.id)
+      }
+    }
+
+    // Create blob if we have multiple events or if single event would be too small to see clearly
+    if (nearbyEvents.length > 1 || pixelsPerDay.value < 1) {
+      const startTimes = nearbyEvents.map(e => e.startDate.getTime())
+      const endTimes = nearbyEvents.map(e => e.endDate ? e.endDate.getTime() : e.startDate.getTime())
+
+      const blobStartTime = Math.min(...startTimes)
+      const blobEndTime = Math.max(...endTimes)
+
+      const blobX = timeToPixel((blobStartTime + blobEndTime) / 2)
+      const track = Math.min(...nearbyEvents.map(e => getEventTrack(e)))
+
+      blobs.push({
+        id: `blob-${blobStartTime}-${blobEndTime}`,
+        events: nearbyEvents,
+        startDate: new Date(blobStartTime),
+        endDate: new Date(blobEndTime),
+        x: blobX,
+        y: 40 + track * 30,
+        track,
+        count: nearbyEvents.length
+      })
+    }
+  }
+
+  // Merge overlapping blobs
+  const mergedBlobs = mergeOverlappingBlobs(blobs)
+
+  console.log('Created', blobs.length, 'initial blobs, merged to', mergedBlobs.length, 'final blobs')
+  return mergedBlobs
+})
+
+function mergeOverlappingBlobs(blobs: EventBlob[]): EventBlob[] {
+  if (blobs.length <= 1) return blobs
+
+  const merged: EventBlob[] = []
+  const processed = new Set<number>()
+
+  for (let i = 0; i < blobs.length; i++) {
+    if (processed.has(i)) continue
+
+    const currentBlob = blobs[i]
+    const currentStartX = timeToPixel(currentBlob.startDate.getTime())
+    const currentEndX = timeToPixel(currentBlob.endDate.getTime())
+    const currentWidth = Math.max(currentEndX - currentStartX, 60)
+
+    const overlappingBlobs = [currentBlob]
+    processed.add(i)
+
+    // Find all blobs that overlap with the current blob
+    for (let j = i + 1; j < blobs.length; j++) {
+      if (processed.has(j)) continue
+
+      const otherBlob = blobs[j]
+      const otherStartX = timeToPixel(otherBlob.startDate.getTime())
+      const otherEndX = timeToPixel(otherBlob.endDate.getTime())
+      const otherWidth = Math.max(otherEndX - otherStartX, 60)
+
+      // Check if blobs overlap horizontally
+      const currentLeft = currentStartX
+      const currentRight = currentStartX + currentWidth
+      const otherLeft = otherStartX
+      const otherRight = otherStartX + otherWidth
+
+      if (!(currentRight < otherLeft || currentLeft > otherRight)) {
+        // Blobs overlap, merge them
+        overlappingBlobs.push(otherBlob)
+        processed.add(j)
+      }
+    }
+
+    // Create merged blob from all overlapping blobs
+    if (overlappingBlobs.length > 1) {
+      const allEvents = overlappingBlobs.flatMap(blob => blob.events)
+      const allStartTimes = allEvents.map(e => e.startDate.getTime())
+      const allEndTimes = allEvents.map(e => e.endDate ? e.endDate.getTime() : e.startDate.getTime())
+
+      const mergedStartTime = Math.min(...allStartTimes)
+      const mergedEndTime = Math.max(...allEndTimes)
+      const mergedTrack = Math.min(...overlappingBlobs.map(blob => blob.track))
+
+      merged.push({
+        id: `merged-blob-${mergedStartTime}-${mergedEndTime}`,
+        events: allEvents,
+        startDate: new Date(mergedStartTime),
+        endDate: new Date(mergedEndTime),
+        x: timeToPixel((mergedStartTime + mergedEndTime) / 2),
+        y: 40 + mergedTrack * 30,
+        track: mergedTrack,
+        count: allEvents.length
+      })
+    } else {
+      // No overlaps, keep the original blob
+      merged.push(currentBlob)
+    }
+  }
+
+  return merged
+}
+
+const visibleEventsOrBlobs = computed(() => {
+  if (shouldUseBlobs.value) {
+    // Return events that are not part of any blob
+    const blobEventIds = new Set(eventBlobs.value.flatMap(blob => blob.events.map(e => e.id)))
+    return visibleEvents.value.filter(event => !blobEventIds.has(event.id))
+  }
+  return visibleEvents.value
 })
 
 // Methods
@@ -767,8 +973,8 @@ function stopDrag(): void {
 function handleZoom(event: WheelEvent): void {
   event.preventDefault()
 
-  // Use consistent zoom factors and make them more responsive
-  const zoomFactor = event.deltaY < 0 ? 1.2 : 1 / 1.2
+  // Use much smaller zoom factors for less sensitivity (reduced by 4x)
+  const zoomFactor = event.deltaY < 0 ? 1.05 : 1 / 1.05
   const newPixelsPerDay = pixelsPerDay.value * zoomFactor
 
   // Apply zoom limits
@@ -790,7 +996,7 @@ function goToToday(): void {
 }
 
 function zoomIn(): void {
-  const zoomFactor = 1.2
+  const zoomFactor = 1.05
   const newPixelsPerDay = Math.min(maxPixelsPerDay.value, pixelsPerDay.value * zoomFactor)
 
   if (Math.abs(newPixelsPerDay - pixelsPerDay.value) > 0.001) {
@@ -800,7 +1006,7 @@ function zoomIn(): void {
 }
 
 function zoomOut(): void {
-  const zoomFactor = 1 / 1.2
+  const zoomFactor = 1 / 1.05
   const newPixelsPerDay = Math.max(minPixelsPerDay.value, pixelsPerDay.value * zoomFactor)
 
   if (Math.abs(newPixelsPerDay - pixelsPerDay.value) > 0.001) {
@@ -837,6 +1043,65 @@ function fitToData(): void {
 
   redrawCanvases()
 }
+
+// Blob interaction functions
+function getBlobPosition(blob: EventBlob): Record<string, string> {
+  // Calculate the width of the blob based on time span
+  const startX = timeToPixel(blob.startDate.getTime())
+  const endX = timeToPixel(blob.endDate.getTime())
+  const naturalWidth = endX - startX
+
+  // Use natural width, but with a reasonable minimum for very small spans
+  const width = Math.max(naturalWidth, 20) // Much smaller minimum width
+
+  return {
+    position: 'absolute',
+    left: `${startX}px`,
+    top: '0',
+    width: `${width}px`,
+    height: '100%',
+  }
+}
+
+function getBlobDateRange(blob: EventBlob): string {
+  const startYear = blob.startDate.getFullYear()
+  const endYear = blob.endDate.getFullYear()
+
+  if (startYear === endYear) {
+    return startYear.toString()
+  }
+  return `${startYear} - ${endYear}`
+}
+
+
+
+function getOverviewBlobPosition(blob: EventBlob): Record<string, string> {
+  const overviewScale = pixelsPerDay.value * 0.1
+
+  const startOffsetTime = blob.startDate.getTime() - centerTime.value
+  const startOffsetDays = startOffsetTime / DAY_MS
+  const startX = containerWidth.value / 2 + startOffsetDays * overviewScale
+
+  const endOffsetTime = blob.endDate.getTime() - centerTime.value
+  const endOffsetDays = endOffsetTime / DAY_MS
+  const endX = containerWidth.value / 2 + endOffsetDays * overviewScale
+
+  const naturalWidth = endX - startX
+  // Use natural width, but with a reasonable minimum for very small spans
+  const width = Math.max(naturalWidth, 10) // Much smaller minimum width for overview
+
+  return {
+    position: 'absolute',
+    left: `${startX}px`,
+    top: '0',
+    width: `${width}px`,
+    height: '100%',
+  }
+}
+
+
+
+
 
 function drawTimeAxis(canvas: HTMLCanvasElement, scale: number, isOverview = false): void {
   const ctx = canvas.getContext('2d')
@@ -1119,7 +1384,6 @@ async function addEvent(): Promise<void> {
 
     // Update local events to match store
     events.value = [...timelineStore.events]
-    emit('events-updated', events.value)
     closeAddForm()
   } catch (error) {
     console.error('Failed to add event:', error)
@@ -1223,6 +1487,9 @@ function showEventDetailOnHover(event: TimelineEvent): void {
 
   const position = calculateDetailPosition(mouseEvent as MouseEvent, event)
   lastInteractionCounter.value++
+  // Ensure hover details start with a high enough z-index to appear above blob bars
+  const baseZIndex = Math.max(lastInteractionCounter.value, 1500)
+  lastInteractionCounter.value = baseZIndex // Update counter to maintain ordering
   const newDetail: EventDetail = {
     event,
     position,
@@ -1230,7 +1497,7 @@ function showEventDetailOnHover(event: TimelineEvent): void {
     velocity: { x: 0, y: 0 },
     mass: 1,
     connectionPathD: '',
-    zIndex: lastInteractionCounter.value,
+    zIndex: baseZIndex,
   }
   newDetail.connectionPathD = getConnectionPath(newDetail)
   eventDetails.value.push(newDetail)
@@ -1294,7 +1561,6 @@ function calculateDetailPosition(
     left: `${left}px`,
     top: `${top}px`,
     width: `${detailWidth}px`,
-    zIndex: '9999',
   }
 }
 
@@ -2269,12 +2535,12 @@ function stopControlsDrag(): void {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 2px solid var(--card);
+  border: 1px solid rgba(60, 128, 238, 0.164);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
 }
 
 .dark .event-dot {
-  border-color: var(--background);
+  border-color: rgba(185, 190, 242, 0.524);
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.1);
 }
 
@@ -2917,4 +3183,211 @@ function stopControlsDrag(): void {
   opacity: 0.9;
   box-shadow: 0 3px 6px rgba(0, 0, 0, 0.4);
 }
+
+/* Event Blob Styles - Highlight Style */
+.timeline-blob {
+  position: absolute;
+  transition: all 0.2s ease;
+  z-index: 1; /* Lower z-index so they don't interfere */
+  pointer-events: none; /* Completely non-interactive */
+  user-select: none;
+  /* Highlight-style background */
+  background: transparent; /* Transparent background */
+  border-left: 2px solid #2a2e527f;
+  border-right: 2px solid #2a2e527f;
+}
+
+.dark .timeline-blob {
+  background: transparent; /* Transparent in dark mode too */
+  border-left: 2px solid rgba(240, 209, 105, 0.555);
+  border-right: 2px solid rgba(240, 209, 105, 0.555);
+}
+
+.timeline-blob:hover {
+  background: rgba(26, 18, 53, 0.1); /* Very subtle background on hover */
+  border-left: 2px solid #1a1235;
+  border-right: 2px solid #1a1235;
+}
+
+.dark .timeline-blob:hover {
+  background: rgba(255, 255, 255, 0.05); /* Very subtle background on hover */
+  border-left: 2px solid rgba(255, 255, 255, 0.25);
+  border-right: 2px solid rgba(255, 255, 255, 0.25);
+}
+
+
+
+.blob-container {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0px;
+  padding: 0px;
+  margin: 0px;
+  position: relative;
+  pointer-events: none; /* Let clicks pass through to parent */
+}
+
+
+
+.dark .blob-container {
+  /* No additional styles needed, parent handles the background */
+}
+
+.blob-event-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 10%;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 7px;
+  color: white;
+  font-weight: bold;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.7);
+  pointer-events: none; /* Let clicks pass through to parent */
+  flex-shrink: 0; /* Prevent dots from shrinking */
+}
+
+.dark .blob-event-dot {
+  border-color: rgba(176, 181, 235, 0.157);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.blob-event-overflow {
+  background: var(--muted) !important;
+  color: var(--muted-foreground) !important;
+}
+
+.blob-overflow-count {
+  font-size: 5px;
+  font-weight: bold;
+}
+
+.blob-label {
+  position: absolute;
+  left: -1px;
+  bottom: 80px;
+  white-space: nowrap;
+  background: none;
+  opacity: 0.9;
+  padding: 0;
+  border-radius: 0;
+  font-size: 14px;
+  box-shadow: none;
+  color: var(--foreground);
+  font-weight: 700;
+  font-family: 'Impact', 'Arial Black', 'Helvetica Neue', sans-serif;
+  pointer-events: none; /* Let clicks pass through to parent */
+  transform: rotate(90deg);
+  transform-origin: bottom left;
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.4);
+  letter-spacing: 0.5px;
+}
+
+.dark .blob-label {
+  color: var(--foreground);
+  text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+.timeline-blob:hover .blob-event-dot {
+  transform: scale(1.1);
+  border-color: rgba(255, 255, 255, 1);
+}
+
+.dark .timeline-blob:hover .blob-event-dot {
+  border-color: rgba(0, 0, 0, 1);
+}
+
+.timeline-blob:hover .blob-label {
+  opacity: 1;
+  transform: rotate(90deg) scale(1.05);
+}
+
+/* Overview Blob Styles */
+.overview-blob {
+  z-index: 3;
+  /* Inherit highlight style from parent but with reduced opacity */
+  background: transparent !important; /* Transparent background */
+  border-top: 1px solid rgba(24, 16, 47, 0.8);
+  border-bottom: 1px solid rgba(24, 16, 47, 0.8);
+  border-left: none !important;
+  border-right: none !important;
+}
+
+.dark .overview-blob {
+  background: transparent !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.overview-blob:hover {
+  background: rgba(26, 18, 53, 0.1) !important; /* Very subtle background on hover */
+  border-top: 1px solid rgba(26, 18, 53, 0.9);
+  border-bottom: 1px solid rgba(26, 18, 53, 0.9);
+}
+
+.dark .overview-blob:hover {
+  background: rgba(255, 255, 255, 0.03) !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.blob-container-small {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 0px;
+  padding: 0px;
+  margin: 0px;
+  pointer-events: none; /* Let clicks pass through to parent */
+}
+
+.dark .blob-container-small {
+  /* No additional styles needed, parent handles the background */
+}
+
+.blob-event-dot-small {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 3px;
+  color: white;
+  font-weight: bold;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.7);
+  pointer-events: none; /* Let clicks pass through to parent */
+  flex-shrink: 0; /* Prevent dots from shrinking */
+}
+
+.dark .blob-event-dot-small {
+  border-color: rgba(0, 0, 0, 0.8);
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.blob-event-overflow-small {
+  background: var(--muted) !important;
+  color: var(--muted-foreground) !important;
+}
+
+.blob-overflow-count-small {
+  font-size: 3px;
+  font-weight: bold;
+}
+
+
 </style>
