@@ -230,12 +230,18 @@ export const useTimelineStore = defineStore('timeline', () => {
     console.log('Loading available timelines...')
     try {
       const userId = getCurrentUserId()
+      if (!userId) {
+        console.log('No user ID available, clearing timeline list')
+        availableTimelines.value = []
+        return
+      }
       const timelineIds = await getAvailableTimelineIds(userId)
       console.log('Available timeline IDs loaded:', timelineIds)
       availableTimelines.value = timelineIds
     } catch (err) {
       console.error('Error loading available timelines:', err)
-      error.value = `Failed to load available timelines: ${err}`
+      // Don't set error here as it might be called during initialization
+      availableTimelines.value = []
     }
   }
 
@@ -263,11 +269,6 @@ export const useTimelineStore = defineStore('timeline', () => {
     error.value = null
 
     try {
-      const userId = getCurrentUserId()
-      if (!userId) {
-        throw new Error('User must be logged in to import timelines')
-      }
-
       const text = await file.text()
       const data = JSON.parse(text) as TimelineData
 
@@ -276,16 +277,16 @@ export const useTimelineStore = defineStore('timeline', () => {
         ...data,
         id: generateId(), // Generate new ID to avoid conflicts
         updatedAt: new Date(),
-        events: data.events.map(e => ({
+        events: data.events?.map(e => ({
           ...e,
           startDate: new Date(e.startDate),
           endDate: e.endDate ? new Date(e.endDate) : undefined
-        })),
-        highlights: data.highlights.map(h => ({
+        })) || [],
+        highlights: data.highlights?.map(h => ({
           ...h,
           startDate: new Date(h.startDate),
           endDate: new Date(h.endDate)
-        })),
+        })) || [],
         settings: {
           ...data.settings,
           centerDate: data.settings?.centerDate ? new Date(data.settings.centerDate) : new Date(),
@@ -293,10 +294,17 @@ export const useTimelineStore = defineStore('timeline', () => {
         }
       }
 
-      // Save timeline for the current user
-      await saveTimelineToFile(timeline, userId)
+      // Set as current timeline immediately for viewing
       currentTimeline.value = timeline
-      await loadAvailableTimelines()
+
+      // If user is logged in, save the timeline
+      const userId = getCurrentUserId()
+      if (userId) {
+        await saveTimelineToFile(timeline, userId)
+        await loadAvailableTimelines()
+      } else {
+        console.log('User not logged in - timeline imported for viewing only (not saved)')
+      }
     } catch (err) {
       error.value = `Failed to import timeline: ${err}`
       throw err
@@ -321,19 +329,31 @@ export const useTimelineStore = defineStore('timeline', () => {
     }
 
     console.log('Initializing timeline store for user:', userId)
-    // No need to initialize storage manager for API-based storage
+    isLoading.value = true
+    error.value = null
 
-    await loadAvailableTimelines()
+    try {
+      await loadAvailableTimelines()
 
-    // Load default timeline or create one
-    if (availableTimelines.value.length === 0) {
-      await createTimeline('My Timeline')
-    } else {
-      await loadTimeline(availableTimelines.value[0])
+      // Load default timeline or create one
+      if (availableTimelines.value.length === 0) {
+        console.log('No timelines found, creating default timeline...')
+        await createTimeline('My Timeline')
+      } else {
+        console.log('Loading first available timeline:', availableTimelines.value[0])
+        await loadTimeline(availableTimelines.value[0])
+      }
+
+      isInitialized.value = true
+      console.log('Timeline store initialization complete')
+    } catch (err) {
+      console.error('Timeline store initialization failed:', err)
+      error.value = `Failed to initialize timeline store: ${err}`
+      // Even if initialization fails, mark as initialized to prevent infinite loops
+      isInitialized.value = true
+    } finally {
+      isLoading.value = false
     }
-
-    isInitialized.value = true
-    console.log('Timeline store initialization complete')
   }
 
   // Reset store when user logs out
@@ -447,7 +467,10 @@ function fileToBase64(file: File): Promise<string> {
 
 // Storage functions using the API
 async function saveTimelineToFile(timeline: TimelineData, userId?: string): Promise<void> {
-  if (!userId) throw new Error('User ID required')
+  if (!userId) {
+    console.log('No user ID provided - timeline cannot be saved to server')
+    return
+  }
 
   const response = await fetch('/api/timelines', {
     method: 'POST',
@@ -464,7 +487,9 @@ async function saveTimelineToFile(timeline: TimelineData, userId?: string): Prom
 }
 
 async function loadTimelineFromFile(id: string, userId?: string): Promise<TimelineData> {
-  if (!userId) throw new Error('User ID required')
+  if (!userId) {
+    throw new Error('User ID required to load timeline from server')
+  }
 
   const response = await fetch(`/api/timelines/${id}?userId=${userId}`)
 
