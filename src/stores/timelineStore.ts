@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { apiStorageManager } from '@/lib/apiStorage'
+import { storageManager } from '@/lib/storage'
 import { useAuthStore } from './authStore'
 
 export interface TimelineEvent {
@@ -66,6 +66,7 @@ export const useTimelineStore = defineStore('timeline', () => {
     error.value = null
 
     try {
+      const userId = getCurrentUserId()
       const newTimeline: TimelineData = {
         id: generateId(),
         name,
@@ -79,7 +80,7 @@ export const useTimelineStore = defineStore('timeline', () => {
         updatedAt: new Date()
       }
 
-      await saveTimelineToFile(newTimeline)
+      await saveTimelineToFile(newTimeline, userId)
       currentTimeline.value = newTimeline
       await loadAvailableTimelines()
     } catch (err) {
@@ -95,7 +96,8 @@ export const useTimelineStore = defineStore('timeline', () => {
     error.value = null
 
     try {
-      const timeline = await loadTimelineFromFile(id)
+      const userId = getCurrentUserId()
+      const timeline = await loadTimelineFromFile(id, userId)
       currentTimeline.value = timeline
     } catch (err) {
       error.value = `Failed to load timeline: ${err}`
@@ -112,8 +114,9 @@ export const useTimelineStore = defineStore('timeline', () => {
     error.value = null
 
     try {
+      const userId = getCurrentUserId()
       currentTimeline.value.updatedAt = new Date()
-      await saveTimelineToFile(currentTimeline.value)
+      await saveTimelineToFile(currentTimeline.value, userId)
     } catch (err) {
       error.value = `Failed to save timeline: ${err}`
       throw err
@@ -227,7 +230,8 @@ export const useTimelineStore = defineStore('timeline', () => {
   async function loadAvailableTimelines(): Promise<void> {
     console.log('Loading available timelines...')
     try {
-      const timelineIds = await getAvailableTimelineIds()
+      const userId = getCurrentUserId()
+      const timelineIds = await getAvailableTimelineIds(userId)
       console.log('Available timeline IDs loaded:', timelineIds)
       availableTimelines.value = timelineIds
     } catch (err) {
@@ -307,7 +311,7 @@ export const useTimelineStore = defineStore('timeline', () => {
 
     console.log('Initializing timeline store for user:', userId)
     // Initialize storage manager first
-    await apiStorageManager.init()
+    await storageManager.init()
 
     await loadAvailableTimelines()
 
@@ -343,8 +347,9 @@ export const useTimelineStore = defineStore('timeline', () => {
     }, 10000) // 10 second timeout
 
     try {
+      const userId = getCurrentUserId()
       console.log('Deleting timeline:', id, 'Current timeline:', currentTimeline.value?.id)
-      await apiStorageManager.deleteTimeline(id)
+      await storageManager.deleteTimeline(id, userId)
 
       // If we deleted the current timeline, load another one or create a new one
       if (currentTimeline.value?.id === id) {
@@ -421,26 +426,43 @@ function fileToBase64(file: File): Promise<string> {
   })
 }
 
-// Storage functions using the API storage manager
-async function saveTimelineToFile(timeline: TimelineData): Promise<void> {
-  await apiStorageManager.saveTimeline(timeline)
+// Storage functions using the storage manager
+async function saveTimelineToFile(timeline: TimelineData, userId?: string): Promise<void> {
+  await storageManager.saveTimeline(timeline, userId)
 }
 
-async function loadTimelineFromFile(id: string): Promise<TimelineData> {
-  return await apiStorageManager.loadTimeline(id)
+async function loadTimelineFromFile(id: string, userId?: string): Promise<TimelineData> {
+  const timeline = await storageManager.loadTimeline(id, userId)
+  return {
+    ...timeline,
+    events: timeline.events.map(e => ({
+      ...e,
+      startDate: new Date(e.startDate),
+      endDate: e.endDate ? new Date(e.endDate) : undefined
+    })),
+    highlights: timeline.highlights.map(h => ({
+      ...h,
+      startDate: new Date(h.startDate),
+      endDate: new Date(h.endDate)
+    })),
+    settings: {
+      ...timeline.settings,
+      centerDate: new Date(timeline.settings.centerDate)
+    }
+  }
 }
 
-async function getAvailableTimelineIds(): Promise<string[]> {
-  console.log('Getting available timeline IDs from API storage manager...')
-  const ids = await apiStorageManager.listTimelines()
-  console.log('API storage manager returned timeline IDs:', ids)
+async function getAvailableTimelineIds(userId?: string): Promise<string[]> {
+  console.log('Getting available timeline IDs from storage manager...')
+  const ids = await storageManager.listTimelines(userId)
+  console.log('Storage manager returned timeline IDs:', ids)
   return ids
 }
 
 async function saveImageFile(filename: string, base64Data: string): Promise<void> {
-  await apiStorageManager.saveImage(filename, base64Data)
+  await storageManager.saveImage(filename, base64Data)
 }
 
 async function deleteImage(filename: string): Promise<void> {
-  await apiStorageManager.deleteImage(filename)
+  await storageManager.deleteImage(filename)
 }
